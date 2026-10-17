@@ -27,6 +27,7 @@ test('the host plugin hot-swaps: unload removes every registration and re-apply 
   assert.equal(tools(), 10);
   assert.deepEqual(commandNames().filter(n => n === 'ctx'), ['ctx']);
   assert.equal(await promptSections(), 1);
+  assert.equal(f.ctx.get('contextWindows')?.states, f.plugin.states);
 
   // Two swaps: a leak would double a registration, and a stale layer would throw
   // on the duplicate prompt section the second time round.
@@ -35,6 +36,7 @@ test('the host plugin hot-swaps: unload removes every registration and re-apply 
     assert.equal(tools(), 0, `cycle ${cycle}: tools leaked`);
     assert.equal(commandNames().includes('ctx'), false, `cycle ${cycle}: command leaked`);
     assert.equal(await promptSections(), 0, `cycle ${cycle}: prompt section leaked`);
+    assert.equal(f.ctx.get('contextWindows'), undefined, `cycle ${cycle}: service leaked`);
     assert.equal((await f.execute(a, 'notes_read_file', { path: 'durable.md' })).isError, true);
     ({ fiber: f.fiber } = await applyHost(f.ctx));
   }
