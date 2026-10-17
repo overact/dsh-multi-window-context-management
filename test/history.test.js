@@ -50,15 +50,15 @@ test('window, goal and checklist IDs advertised in a handoff stay readable', asy
   assert.equal(summary.event_type, 'compaction/summary');
   assert.equal(summary.role, 'system');
   assert.equal(summary.window_id, 'win_001');
-  assert.match(summary.content, /<context_window id="win_002"/);
+  assert.equal(summary.content, 'Fixture native summary.');
   // JSON format still returns the complete durable record, raw output included.
   const raw = JSON.parse(h.readItem({ item_id: window.summary_item_id, format: 'json' }).content);
   assert.equal(raw.type, 'compaction/summary');
-  assert.equal(raw.data.rawOutput[0].text, 'Fixture legacy summary.');
+  assert.equal(raw.data.rawOutput[0].text, 'Fixture native summary.');
   assert.match(h.readItem({ item_id: `item_${goal.seq}` }).content, /Ship the window fix/);
   assert.match(h.readItem({ item_id: `item_${todo.seq}` }).content, /Write tests/);
-  // Scope: the records stay out of the message-shaped listing. Their text is
-  // still searchable through the handoff checkpoint message that carries it.
+  // Scope: the records stay out of the message-shaped listing. The goal is
+  // still searchable through the window message that quotes it.
   assert.equal(h.listItems({ limit: 50 }).items.some(i => i.event_type === 'compaction/summary'), false);
   const found = h.searchContents({ query: 'Ship the window fix' });
   assert.ok(found.matches.length >= 1);

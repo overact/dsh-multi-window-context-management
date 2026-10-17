@@ -8,7 +8,7 @@ import { runPreflight, requirements, definesName } from '../scripts/preflight.mj
 
 /** A DSH install that links every real package except the stubbed ones, plus
  * an isolated $DSH_HOME whose web profile holds the given extra plugins. */
-function fixture({ stubs = {}, plugins = {} } = {}) {
+function fixture({ stubs = {}, plugins = {}, patch } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ctx-preflight-'));
   const dsh = join(root, 'dsh');
   const scope = join(dsh, 'node_modules', '@deepseek-ai');
@@ -23,6 +23,7 @@ function fixture({ stubs = {}, plugins = {} } = {}) {
   }
   const profile = join(root, 'home', 'profiles', 'web');
   mkdirSync(join(profile, 'node_modules'), { recursive: true });
+  if (patch) writeFileSync(join(profile, 'cordis.patch.yml'), patch);
   writeFileSync(join(profile, 'package.json'), JSON.stringify({ dependencies: Object.fromEntries(Object.keys(plugins).map(n => [n, '1.0.0'])) }));
   for (const [name, code] of Object.entries(plugins)) {
     mkdirSync(join(profile, 'node_modules', name));
@@ -46,7 +47,6 @@ test('requirements are derived from the plugin sources', () => {
   const req = requirements();
   assert.deepEqual(req.commands, ['ctx']);
   assert.equal(req.tools.length, 10);
-  assert.ok(req.hooks.includes('summarize') && req.hooks.includes('compactIfNeeded'));
   assert.ok(req.services.tools.includes('register'));
   assert.ok(req.events.includes('agent/pre-step'));
   assert.ok(req.imports['@deepseek-ai/dsh-llm'].includes('createUserMessage'));
@@ -71,26 +71,35 @@ test('preflight passes on the real DSH', async () => {
 
 test('preflight accepts a constant DSH import and still fails on a missing one', async () => {
   const names = requirements().imports['@deepseek-ai/dsh-llm'];
-  assert.ok(names.includes('IMAGE_OFFLOAD_REQUIRED_CODE'), 'the error-code constant stays a derived requirement');
-  const stub = names.filter(n => n !== 'createUserMessage').map(n => `export const ${n} = 'stub';\n`).join('');
-  const env = fixture({ stubs: { 'dsh-llm': stub } });
+  assert.deepEqual(names, ['createUserMessage']);
+  for (const [stub, ok] of [["export const createUserMessage = 'stub';\n", true], ["export const other = 'stub';\n", false]]) {
+    const env = fixture({ stubs: { 'dsh-llm': stub } });
+    try {
+      const check = (await env.run()).results.find(r => r.id === 'import @deepseek-ai/dsh-llm');
+      // A non-function export is usable, so only a genuinely absent name fails.
+      assert.equal(check.ok, ok);
+      if (!ok) assert.match(check.detail, /missing export\(s\): createUserMessage/);
+    } finally {
+      env.dispose();
+    }
+  }
+});
+
+test('preflight reports a missing preset compaction seam, not a version', async () => {
+  const env = fixture({ stubs: { 'dsh-agent-preset-registry': 'export class AgentPresetRegistry { register() {} }\n' } });
   try {
-    const check = (await env.run()).results.find(r => r.id === 'import @deepseek-ai/dsh-llm');
-    // A non-function export is usable, so only the genuinely absent name fails.
-    assert.equal(check.ok, false);
-    assert.match(check.detail, /missing export\(s\): createUserMessage/);
-    assert.doesNotMatch(check.detail, /IMAGE_OFFLOAD_REQUIRED_CODE/);
+    const result = await env.run();
+    assert.deepEqual(failures(result), ['preset compaction']);
+    assert.match(result.results.find(r => r.id === 'preset compaction').detail, /serviceFor\(\)/);
   } finally {
     env.dispose();
   }
 });
 
-test('preflight reports a missing compaction hook, not a version', async () => {
-  const env = fixture({ stubs: { 'dsh-compaction-basic': 'export class BasicCompactionEngine { compactIfNeeded() {} }\n' } });
+test('preflight fails while the profile still restates presets with the removed engine', async () => {
+  const env = fixture({ patch: "- id: preset-standard\n  config:\n    plugins:\n      - name: '@local/dsh-context-management/compaction'\n" });
   try {
-    const result = await env.run();
-    assert.deepEqual(failures(result), ['compaction hooks']);
-    assert.match(result.results.find(r => r.id === 'compaction hooks').detail, /summarize\(\)/);
+    assert.deepEqual(failures(await env.run()), ['legacy preset overrides']);
   } finally {
     env.dispose();
   }

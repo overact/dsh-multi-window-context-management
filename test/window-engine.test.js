@@ -5,7 +5,12 @@ import { SessionStateStore } from '../lib/session-state.js';
 import { WindowEngine } from '../lib/window-engine.js';
 import { NotesStore } from '../lib/notes-store.js';
 
-test('handoff preparation is bounded and side-effect free', () => {
+/** A committed `compaction/summary` as DSH writes it. */
+function summaryEvent(text = 'Native summary.', seq = 99) {
+  return { seq, data: { compactionId: 'c-1', shadowedSeqs: [0, 1, 2], summary: [{ type: 'text', text }], rawOutput: [{ type: 'text', text }], provider: 'p', model: 'm' } };
+}
+
+test('the window message is bounded and side-effect free', () => {
   const s = Session.create('header'), states = new SessionStateStore();
   for (let i = 0; i < 8; i++) user(s, `User ${i}: ` + 'u'.repeat(10_000));
   s.append('goal/change', { goal: { phase: 'active', objective: 'g'.repeat(20_000) } });
@@ -13,39 +18,30 @@ test('handoff preparation is bounded and side-effect free', () => {
   for (let i = 0; i < 4; i++) states.writeNote(s, `n${i}`, 'n'.repeat(900_000));
   const seq = s.seq;
   for (const budget of [8000, 16000, 32000]) {
-    const header = new WindowEngine(states).prepare(s, budget);
-    assert.ok(header.header.length <= budget, `${header.header.length} > ${budget}`);
-    assert.match(header.header, /User 7/);
-    // Early text may survive only as the bounded extractive window summary
-    // (the record and its directory line); recent instructions stay recent.
-    assert.ok(header.record.summary.length <= 1000);
-    const recent = header.header.split('Recent user instructions (chronological):\n')[1]?.split('\nWindow directory:')[0] ?? '';
+    const message = new WindowEngine(states).prepare(s, budget, summaryEvent('s'.repeat(50_000)));
+    assert.ok(message.header.length <= budget, `${message.header.length} > ${budget}`);
+    assert.ok(message.record.summary.length <= 1000);
+    const recent = message.header.split('Recent user instructions (chronological):\n')[1]?.split('\nWindow directory:')[0] ?? '';
     assert.match(recent, /User 7/); assert.doesNotMatch(recent, /User 0/);
     assert.equal(states.get(s).windows.length, 1); assert.equal(s.seq, seq);
   }
 });
 
-test('generated handoffs are bounded and keep the session snapshot', () => {
-  const s = Session.create('generated'), states = new SessionStateStore();
+test('the window message names its summary and carries the session snapshot', () => {
+  const s = Session.create('snapshot'), states = new SessionStateStore();
   for (let i = 0; i < 4; i++) user(s, `User ${i}: ` + 'u'.repeat(2_000));
   s.append('todo/write', { todos: [{ content: 'Finish YAML', status: 'in_progress' }] });
-  const generated = { text: '## Primary Request\n' + 'g'.repeat(50_000), provider: 'p', model: 'm' };
-  const engine = new WindowEngine(states);
-  const tiny = engine.prepare(s, 7000, generated);
-  assert.equal(tiny.record.summary_kind, 'extractive');
-  assert.equal(tiny.record.generated_discarded, 'budget');
-  for (const budget of [12000, 16000, 32000]) {
-    const handoff = engine.prepare(s, budget, generated);
-    assert.equal(handoff.record.summary_kind, 'generated');
-    assert.ok(handoff.header.length <= budget, `${handoff.header.length} > ${budget}`);
-    assert.match(handoff.header, /<generated_handoff>\n## Primary Request/);
-    // Directory previews skip the summary's headings.
-    assert.match(handoff.header, /\nwin_001 \(start item_0\): g{20}/);
-    assert.match(handoff.header, /\(p\/m\)/);
-    assert.match(handoff.header, /Finish YAML/); assert.match(handoff.header, /User 3/);
-    // Recent instructions are quoted up to 1,000 characters each, not a 200-character topic.
-    assert.match(handoff.header, /\[item_\d+\] User 3: u{970}/);
-  }
+  const { header, record } = new WindowEngine(states).prepare(s, 16000, summaryEvent('## Primary Request\n' + 'g'.repeat(5_000)));
+  assert.deepEqual({ ...record, summary: undefined }, { version: 3, window_id: 'win_001', compaction_id: 'c-1', through_seq: 2, summary_kind: 'generated', summary: undefined });
+  assert.match(header, /^<context_window id="win_002" previous_window_id="win_001">\n<window_record>/);
+  assert.match(header, /\(item_99, written by p\/m\)/);
+  assert.doesNotMatch(header, /g{2000}/, 'the summary itself stays in the native checkpoint');
+  // Directory previews skip the summary's headings.
+  assert.match(header, /\nwin_001 \(start item_0, summary item_99\): g{20}/);
+  assert.match(header, /Finish YAML/);
+  // Recent instructions are quoted up to 1,000 characters each, not a 200-character topic.
+  assert.match(header, /\[item_\d+\] User 3: u{970}/);
+  assert.match(header, /<\/context_window>$/);
 });
 
 test('note capacity checks apply to write and append without evicting notes', () => {
@@ -54,64 +50,4 @@ test('note capacity checks apply to write and append without evicting notes', ()
   assert.throws(() => notes.appendToFile('self', 'c', 'x'), /file limit/);
   assert.throws(() => notes.appendToFile('self', 'a', 'xxxxx'), /byte limit/);
   assert.equal(notes.readFile('self', 'a').content, 'abc');
-});
-
-const bodyOf = header => header.match(/<generated_handoff>\n([\s\S]*?)\n<\/generated_handoff>/)?.[1] ?? '';
-
-test('an unused generated reserve returns to the handoff body, and notes cannot consume it', () => {
-  const generated = { text: '## Body\n' + 'g'.repeat(60_000), provider: 'p', model: 'm' };
-
-  // Sparse state: the snapshot allowance the record cannot spend is body content
-  // now, instead of being stranded while the body is truncated.
-  const lean = new WindowEngine(new SessionStateStore()).prepare(Session.create('sparse'), 16000, generated);
-  assert.equal(lean.record.summary_kind, 'generated');
-  assert.ok(lean.header.length <= 16000, `${lean.header.length} > 16000`);
-  assert.ok(bodyOf(lean.header).length >= 12_000, `body ${bodyOf(lean.header).length} did not reclaim the reserve`);
-  assert.match(lean.header, /\n<\/generated_handoff>/);
-
-  // Oversized note previews stay bounded above the body baseline and never break
-  // the body frame: the handoff is still usable and complete.
-  const noted = Session.create('notes'), noteStates = new SessionStateStore();
-  for (let i = 0; i < 8; i++) noteStates.writeNote(noted, `n${i}`, 'n'.repeat(9_000));
-  const heavy = new WindowEngine(noteStates).prepare(noted, 16000, generated);
-  assert.equal(heavy.record.summary_kind, 'generated');
-  assert.ok(heavy.header.length <= 16000, `${heavy.header.length} > 16000`);
-  assert.ok(bodyOf(heavy.header).length >= 5_000, `body ${bodyOf(heavy.header).length} was starved by notes`);
-  assert.match(heavy.header, /Note self\/notes\/n/);
-  assert.match(heavy.header, /\n<\/generated_handoff>/);
-});
-
-test('an oversized sectioned handoff keeps every section the host mandates', () => {
-  const s = Session.create('sections'), states = new SessionStateStore();
-  for (let i = 0; i < 4; i++) user(s, `User ${i}: ` + 'u'.repeat(1_000));
-  // The host's directive mandates these eight sections in this order, and writes
-  // `## Critical Context` LAST — so a tail cut spends the whole body budget on
-  // the earlier sections and deletes decisions and open questions outright.
-  const titles = ['Primary Request and Intent', 'Key Technical Concepts', 'Files and Code',
-    'Errors and Fixes', 'Pending Jobs', 'Current Work', 'Next Step', 'Critical Context'];
-  const sizes = [1331, 2229, 4708, 3356, 300, 936, 512, 2336];
-  const text = titles.map((title, i) => {
-    const head = `## ${title}\n`, bullet = `- ${title.toLowerCase()} detail\n`;
-    return head + bullet.repeat(Math.ceil((sizes[i] - head.length) / bullet.length)).slice(0, sizes[i] - head.length);
-  }).join('\n');
-  const engine = new WindowEngine(states);
-  const { header, record } = engine.prepare(s, 16000, { text, provider: 'p', model: 'm' });
-  assert.ok(header.length <= 16000, `${header.length} > 16000`);
-  assert.equal(record.summary_kind, 'generated');
-  const body = bodyOf(header);
-  assert.deepEqual([...body.matchAll(/^## (.+)$/gm)].map(m => m[1]), titles);
-  for (const title of ['Critical Context', 'Next Step', 'Current Work']) {
-    assert.ok(body.includes(`## ${title}\n- ${title.toLowerCase()} detail`), `${title} was trimmed`);
-  }
-  // The long excerpts are what pays for the sections that carry the decisions.
-  assert.match(body, /## Files and Code\n[\s\S]*… \[truncated\]/);
-  // A mechanised receipt says what was dropped, outside the summarizer's own
-  // prose: a marker it writes is not durable evidence that a section is partial.
-  const receipt = header.match(/<clipping_receipt>([\s\S]*?)<\/clipping_receipt>/)?.[1] ?? '';
-  assert.match(receipt, /Clipped by priority/);
-  assert.match(receipt, /Shortened: .*Files and Code \d+\/\d+/);
-  // It reports the clip, and does not certify the summarizer's own completeness.
-  assert.doesNotMatch(receipt, /complete/i);
-  assert.ok(header.indexOf('<clipping_receipt>') < header.indexOf('<generated_handoff>'),
-    'the receipt belongs between the header and the body');
 });

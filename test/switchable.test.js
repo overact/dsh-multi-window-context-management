@@ -38,7 +38,6 @@ test('disabled-at-load remains configurable, and unloading the host returns the 
   await f.ctx.settings.update('context-management', { enabled: true }); await Promise.resolve();
   assert.equal(f.ctx.tools.schemas().length, 10);
   await f.fiber.dispose();
-  assert.equal(f.ctx.get('contextWindows'), undefined);
   const a = await f.agent(); user(a.session, 'x'.repeat(30_000)); user(a.session, 'tail');
   await f.native.compactNow(a, new AbortController().signal);
   assert.equal(f.legacyCalls, 1);

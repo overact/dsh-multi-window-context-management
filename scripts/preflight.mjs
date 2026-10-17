@@ -4,7 +4,7 @@
 //
 // Nothing here compares version numbers. Requirements are derived from the
 // lib/ sources (DSH imports, ctx.<service>.<method> calls, events, session-log
-// event types, base-class hooks, tool and command names), so a new usage in
+// event types, tool and command names), so a new usage in
 // the code is checked without editing this file.
 //
 //   node scripts/preflight.mjs [--profile web] [--dsh-dir <dir>]
@@ -13,7 +13,6 @@ import { readFileSync, readdirSync, existsSync, accessSync, realpathSync, consta
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveDshDir, profileDir, fromDsh, dshHome, parseArgs } from './dsh-env.mjs';
-import { shippedOverrides, foreignOverrides } from './presets.mjs';
 import { NOTES_TOOLS } from '../lib/tools/notes.js';
 import { historyToolDefinitions } from '../lib/tools/history.js';
 import { newContextToolDefinition } from '../lib/tools/new-context.js';
@@ -72,7 +71,6 @@ export function requirements() {
     sessionTypes: uniq([...HISTORY_EVENT_TYPES,
       ...all(host, /event\.type === '([^']+)'/g).map(m => m[1]),
       ...all(host, /\.append\('([^']+)'/g).map(m => m[1])]),
-    hooks: uniq(all(host, /super\.(\w+)\(/g).map(m => m[1])),
     tools: uniq([newContextToolDefinition.name, ...Object.values(NOTES_TOOLS).map(t => t.name),
       ...historyToolDefinitions.map(t => t.name)]),
     commands: all(index, /COMMAND_NAMES = \[([^\]]*)\]/g).flatMap(([, list]) => all(list, /'([^']+)'/g).map(m => m[1])),
@@ -158,11 +156,14 @@ function checks(req) {
     });
   }
 
-  add('compaction hooks', 'fail', async ({ dsh }) => {
+  // new_context drives the preset's own engine through these two seams.
+  add('preset compaction', 'fail', async ({ dsh }) => {
     const { BasicCompactionEngine } = await dsh.import('@deepseek-ai/dsh-compaction-basic');
-    const missing = req.hooks.filter(h => typeof BasicCompactionEngine?.prototype?.[h] !== 'function');
-    if (missing.length) throw new Error(`BasicCompactionEngine lacks ${missing.map(h => `${h}()`).join(', ')}`);
-    return `BasicCompactionEngine has ${req.hooks.map(h => `${h}()`).join(', ')}`;
+    if (typeof BasicCompactionEngine?.prototype?.compactIfNeeded !== 'function') throw new Error('BasicCompactionEngine lacks compactIfNeeded()');
+    const registry = await dsh.import('@deepseek-ai/dsh-agent-preset-registry');
+    const classes = Object.values(registry).filter(v => typeof v === 'function' && v.prototype);
+    if (!classes.some(c => typeof c.prototype.serviceFor === 'function')) throw new Error('agentPresets provides no serviceFor()');
+    return 'compactIfNeeded(), agentPresets.serviceFor()';
   });
 
   for (const [service, methods] of Object.entries(req.services)) {
@@ -190,12 +191,6 @@ function checks(req) {
     const missing = req.sessionTypes.filter(t => !literal(t).test(dshCode()));
     if (missing.length) throw new Error(`unknown to DSH: ${missing.join(', ')} (history/window tracking would miss them)`);
     return `${req.sessionTypes.length} event types`;
-  });
-
-  add('web presets', 'fail', ({ dsh }) => {
-    const { overrides } = shippedOverrides(dsh.packageDir('@deepseek-ai/dsh-web-app'));
-    if (!overrides.length) throw new Error('no shipped preset mounts @deepseek-ai/dsh-compaction-basic; the windowing engine cannot be mounted');
-    return overrides.map(o => o.id).join(', ');
   });
 
   add('notes storage', 'fail', async ({ dsh }) => {
@@ -231,23 +226,14 @@ function checks(req) {
   collide('tool names', req.tools);
   collide('command names', req.commands);
 
-  add('other compaction engines', 'warn', ({ plugins }) => {
-    const rivals = plugins.filter(p => {
-      const m = JSON.parse(readFileSync(join(p.dir, 'package.json'), 'utf8'));
-      const deps = { ...m.dependencies, ...m.peerDependencies };
-      return '@deepseek-ai/dsh-compaction-basic' in deps || /extends\s+BasicCompactionEngine\b/.test(packageCode(p.dir));
-    });
-    if (rivals.length) throw new Error(`${rivals.map(p => p.name).join(', ')} also build on the compaction engine; make sure they do not replace the same preset rows`);
-    return 'none in profile';
-  });
-
-  add('preset ownership', 'fail', ({ dsh, profile }) => {
+  // Builds up to 0.3.x restated the shipped presets with a compaction row that no longer exists.
+  add('legacy preset overrides', 'fail', ({ profile }) => {
     const patch = join(profileDir(profile), 'cordis.patch.yml');
     if (!existsSync(patch)) return 'no profile patch yet';
-    const { overrides } = shippedOverrides(dsh.packageDir('@deepseek-ai/dsh-web-app'));
-    const foreign = foreignOverrides(readFileSync(patch, 'utf8'), overrides);
-    if (foreign.length) throw new Error(`profile patch already overrides ${foreign.join(', ')} outside the generated block; merge that edit first`);
-    return 'no foreign overrides';
+    if (readFileSync(patch, 'utf8').includes('@local/dsh-context-management/compaction')) {
+      throw new Error(`${patch} still restates presets with @local/dsh-context-management/compaction; delete the "context-management preset overrides" block`);
+    }
+    return 'none';
   });
 
   return list;

@@ -2,39 +2,36 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-Windowed compaction, session-private notes and paged history recall for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). The multi-window idea is borrowed from Codex, but this is **not a 1:1 port of the Codex API, and it does not promise lossless recovery of every detail**.
+Windowed context handoffs, session-private notes and paged history recall for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). The multi-window idea is borrowed from Codex, but this is **not a 1:1 port of the Codex API, and it does not promise lossless recovery of every detail**.
 
 ## Compatibility
 
-Version **0.3.6**, verified on **DSH 0.2.0-rc.2 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
+Version **0.4.0**, verified on **DSH 0.2.1-rc.2 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
 
-- Works through official DSH extension points: `@local/dsh-context-management/compaction` subclasses `BasicCompactionEngine` and overrides the `summarize()` hook and the dynamically dispatched `compactIfNeeded()`. No instance monkey-patching, no reads of Cordis internals.
-- Reuses the native tool-call pairing checks, recent-turn retention, maintenance lock, cancellation, shrink check, compaction transaction, persistence and overflow retry.
-- Automatic compaction is still driven by DSH's own callbacks; the plugin adds no loop of its own.
-- The host plugin publishes a `contextWindows` service (session state and settings); preset engines look it up per call rather than via `inject`. Without the host, the engine behaves exactly like the native one, so a preset never loses compaction because of a missing dependency.
-- `new_context` only works in presets that mount this engine; elsewhere it fails with a clear error while the notes/history tools stay usable.
-- The window number only advances once DSH actually commits the replacement messages. Failures, cancellations and "nothing to compact" never report a successful switch.
-- Every window switch builds a bounded handoff. By default (`handoffSummary: generated`) the native summary model is called **once** on the outgoing region and its result is wrapped in `<generated_handoff>`, together with the goal, todos, recent user instructions, recent notes and the window index. The mandatory snapshot is rendered first and the body takes every character left over, so an unused snapshot allowance returns to the body instead of being stranded; optional note previews are bounded so they cannot consume it. An overrun is spent on the sections the host's directive makes most expendable instead of being cut off the end, so every mandated section survives — see the priority trim below. The `compaction/summary` event records the real provider/model/usage even when the body ends up extractive, so the cost shows up in usage accounting. If that call fails, or the remaining budget cannot carry a usable body, the handoff falls back to an extractive one without blocking the switch, and its window record states why (`generated_discarded: budget`); `handoffSummary: extractive` never makes the extra call. Disabling the plugin or its tools falls back to native summaries.
+- **Compaction stays native in every preset.** The plugin never replaces, subclasses or patches DSH's compaction engine, and touches no preset. DSH upgrades need no extra step, and presets you create yourself are covered automatically.
+- After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions, recent notes and the window index. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
+- `new_context` finds the engine of the caller's own preset through `agentPresets.serviceFor(agent, 'compaction')` and asks it for one forced compaction. Native tool-call pairing, retention, maintenance lock, cancellation, shrink check, transaction, persistence and overflow retry all apply unchanged.
+- The window number only advances once DSH actually commits the replacement. Failures, cancellations and "nothing to compact" never report a successful switch.
+- Unloading or disabling the plugin leaves native compaction exactly as DSH ships it.
 
 ## How it works
 
 ```mermaid
 flowchart TD
   P["Before every agent step"] --> Q{"new_context requested?"}
-  Q -- no --> U{"Usage at or above the<br/>auto-compaction threshold?"}
-  U -- no --> C["Continue the conversation"]
-  U -- yes --> K1["Compact older messages<br/>keep the latest 16% verbatim"]
-  Q -- yes --> K0["Compact older messages<br/>keep only the last message"]
-  M["Manual /compact"] --> K0
-  O["Provider reports context overflow"] --> K0
-  K0 & K1 --> S["One call to the summary model"]
-  S --> H["Build the handoff: summary + goal/todo<br/>+ last 4 user instructions verbatim + notes + window index"]
-  H --> W["Enter window win_N+1<br/>system prompt and tools unchanged"]
-  W --> N["Replace handoff.md<br/>append to handoff-log.md"]
-  W --> R["Model recovers exact details on demand<br/>with history_* / notes_*"]
+  Q -- yes --> F["Ask the preset's own engine<br/>for one forced compaction"]
+  Q -- no --> D["DSH's own pressure check"]
+  M["Manual /compact"] --> N
+  O["Provider reports context overflow"] --> N
+  F --> N["DSH native compaction:<br/>one summary call, checkpoint replaces older messages"]
+  D -- above threshold --> N
+  N --> W["compaction/end → plugin appends the window message<br/>goal/todo + last 4 user instructions + notes + window index"]
+  W --> E["Enter window win_N+1<br/>system prompt and tools unchanged"]
+  W --> H["Replace handoff.md<br/>append to handoff-log.md"]
+  E --> R["Model recovers exact details on demand<br/>with history_* / notes_*"]
 ```
 
-All four entry points end in the same switch. If the summary call fails, the handoff falls back to extractive excerpts; with the plugin disabled, DSH's native compaction runs unchanged. The threshold and the verbatim tail are DSH's own settings (`thresholdRatio`, `headroomTokens`, `retainRatio`), which this plugin does not change.
+A session cannot append while it is publishing an event, so the window message follows `compaction/end` on a microtask. That still runs before the compacting engine resumes, so an overflow retry already sends it. The threshold and the verbatim tail are DSH's own settings (`thresholdRatio`, `headroomTokens`, `retainRatio`), which this plugin does not change.
 
 ## Tools
 
@@ -42,15 +39,15 @@ All four entry points end in the same switch. If the summary call fails, the han
 | --- | --- |
 | `new_context` | Request a window switch at the next safe step boundary |
 | `notes_write_file` / `notes_append_to_file` / `notes_read_file` / `notes_list_files_by_prefix` / `notes_search_contents` | Session-private notes that survive window switches and restarts |
-| `history_list_windows` / `history_list_items` / `history_read_item` / `history_search_contents` | Paged recall over the session's complete raw history. `history_read_item` also resolves the window-summary, goal and checklist item IDs that every handoff prints |
+| `history_list_windows` / `history_list_items` / `history_read_item` / `history_search_contents` | Paged recall over the session's complete raw history. `history_read_item` also resolves the summary, goal and checklist item IDs that every window message prints |
 
 ## Usage
 
-`/ctx` toggles the plugin; `/compact` runs the current compaction mode. The toggle applies to **every session of the running DSH instance**, not to a single chat tab.
+`/ctx` toggles the plugin; `/compact` runs DSH's native compaction, which then opens a new window. The toggle applies to **every session of the running DSH instance**, not to a single chat tab.
 
-When the model calls `new_context` it gets back **requested**, not a reset: the switch is scheduled for the next safe step boundary, after the current step's tool results are fully written to history. Explicit switch requests are honoured even when DSH's `auto` compaction is off.
+When the model calls `new_context` it gets back **requested**, not a reset: the switch is scheduled for the next safe step boundary, after the current step's tool results are fully written to history. Explicit switch requests are honoured even when DSH's `auto` compaction is off. A preset with no compaction engine refuses `new_context` with a clear error, while the notes/history tools stay usable.
 
-The web "Context management" settings page uses DSH 0.2.0 `configForms` and shares its backend setting with `/ctx`. Read failures, read-only connections and failed saves are never shown as a successful toggle. Settings changes need no restart. Every registration goes through the Cordis lifecycle, so a hot swap (dispose + re-apply) removes all ten tools, the `/ctx` command, the prompt section and the `contextWindows` service, then re-installs exactly one of each while notes are rebuilt from their durable store; the preset engine re-binds to the fresh store per call and falls back to native summaries while no host is mounted. DSH's `hmr` entry watches only its configured `root` directories, so add this plugin's `lib` there to reload on source edits; otherwise **reload the plugin or restart DSH, then refresh the page** after upgrading the plugin code.
+The web "Context management" settings page uses DSH `configForms` and shares its backend setting with `/ctx`. Read failures, read-only connections and failed saves are never shown as a successful toggle. Settings changes need no restart. Every registration goes through the Cordis lifecycle, so a hot swap (dispose + re-apply) removes all ten tools, the `/ctx` command, the prompt section and both listeners, then re-installs exactly one of each while notes are rebuilt from their durable store. DSH's `hmr` entry watches only its configured `root` directories, so add this plugin's `lib` there to reload on source edits; otherwise **reload the plugin or restart DSH, then refresh the page** after upgrading the plugin code.
 
 ## Storage and recovery
 
@@ -59,11 +56,11 @@ History is read straight from the caller's own immutable DSH session log:
 - `item_<seq>` is a stable event address; nothing is indexed twice and old records are not dropped past 2,000 entries.
 - Native tool results are linked to their names by call ID; `tool/code-dispatch` (PTC) is searchable too.
 - `history_read_item` with `format: "json"` pages through complete raw events, including call arguments and metadata.
-- Windows are delimited by native checkpoint-replacement events. Old events kept in the retained tail still belong to the window that produced them.
+- Windows are delimited by the plugin's window messages, each tied to its compaction by a `<window_record>`. Old events kept in the retained tail still belong to the window that produced them. Sessions written by 0.3.x, whose handoff lived inside the summary, are still read.
 
 Notes are isolated per session under `self/notes/<path>`; **there is no arbitrary cross-session read/write**. They live in the plugin's own directory, `$DSH_HOME/context-management/notes/<sessionId>.json` (`$DSH_HOME` resolved by `dsh-home-paths`), independent of the session-persistence backend's private layout, and are written with DSH's atomic write and cross-process file lock. A failed write never swaps unsaved state into the cache.
 
-After every committed window switch (automatic, `/compact` or `new_context`) the plugin writes two notes itself: `handoff.md` is replaced with the latest full, unclipped handoff (for a generated handoff, the summarizer's raw output), and `handoff-log.md` gains one line with the window, time, summary item and first line. Only the latest handoff is kept in full, because each generated summary already merges the previous one; earlier handoffs stay readable through `history_read_item`. Neither note is injected into the next handoff, whose body already carries the same text. A cancelled or failed compaction writes nothing, and a failed note write is logged without blocking the switch.
+After every committed window switch (automatic, `/compact` or `new_context`) the plugin writes two notes itself: `handoff.md` is replaced with the latest full summary (the summarizer's raw output), and `handoff-log.md` gains one line with the window, time, summary item and first line. Only the latest summary is kept in full, because each one already merges the previous one; earlier ones stay readable through `history_read_item`. Neither note is injected into the window message, because the summary is already in the conversation. A cancelled or failed compaction writes nothing, and a failed note write is logged without blocking the switch.
 
 Notes load on demand, not for every session at startup. On restore, window metadata is rebuilt and that session's notes are loaded; an unfinished transient switch request is not re-executed after a restart.
 
@@ -73,8 +70,8 @@ Include `context-management/notes/` when backing up or migrating; **deleting a s
 
 | Operation | Default / hard limit |
 | --- | --- |
-| Window handoff (`handoffMaxChars`) | 16,000 characters by default, configurable 8,000–32,000 |
-| Injected notes | Up to the 8 most recent, ~1,800 characters each, within the handoff budget |
+| Window message (`handoffMaxChars`) | 8,000 characters by default, configurable 4,000–32,000; the native summary is separate and sized by DSH's own `maxTokens` |
+| Injected notes | Up to the 8 most recent, ~1,200 characters each, within the message budget |
 | Single note file | 1,000,000 UTF-8 bytes |
 | Notes per session | 64 files / 4,000,000 UTF-8 bytes; over-limit writes are rejected, never silently evicted |
 | History list / search | 20 items by default, 50 max; 400 characters per item by default, 1,000 max |
@@ -85,11 +82,7 @@ Include `context-management/notes/` when backing up or migrating; **deleting a s
 
 History queries return `has_more` and `next_cursor`; keep the same filters and order when continuing. Body reads continue with `next_offset_chars`. Search is case-sensitive unless `case_sensitive: false`.
 
-The last four user instructions are quoted in chronological order, up to 1,000 characters each, with their event addresses, later corrections taking precedence. The handoff also keeps the active goal, open todos and a bounded set of recent notes; exact raw evidence is recovered through the history tools.
-
-The host's directive mandates eight sections and writes `## Critical Context` last, so a plain tail cut deletes decisions, constraints and open questions before anything else. The body is therefore clipped by priority instead of from the end. Every piece — the preamble and each `## ` section — first keeps a marker reservation, so the priority split never empties a piece without a marker, and then a small floor so it keeps some text of its own; only the rest is split by weight. A floor is a share of the budget, not a promise that a whole bullet or a complete path survives inside it. `Critical Context`, `Next Step`, `Pending Jobs` and `Current Work` receive the larger shares, and `Files and Code` (the long path and snippet excerpts) gives ground first. That ordering is a preference, not a guarantee: when the sectioned layout fits, every section keeps its heading, but a section is still shortened when the budget cannot cover the reservation its heading and marker need. A cut that lands inside a fenced code block closes it with a synthesized delimiter instead of leaving it open — an open fence would turn every following heading into code and cost the next compaction the sections after it. Where the delimiter does not fit, the repair retreats out of the block instead, and the receipt rather than a marker reports what it dropped, because a marker would sit inside the block too; where it would have to delete every remaining character, it is refused and the excerpt is handed on as it stands. A cut never splits a surrogate pair.
-
-A trimmed section ends with the `… [truncated]` marker, and a mechanically generated `<clipping_receipt>` line beside the body states how many source characters were kept, names the pieces this clip shortened with their kept and original lengths, and points at this window's summary item (`history_read_item` in JSON mode) for the untrimmed reply. A marker written by the summarizer is not durable evidence that a section is partial; the receipt is, and it survives into the next checkpoint. The receipt describes this clip only — it cannot certify that the summarizer omitted nothing — and it reports the reason when the reply is not sectioned at all or when the sectioned layout did not fit the budget. Its reservation is taken only when the reply actually has to be clipped.
+The last four user instructions are quoted in chronological order, up to 1,000 characters each, with their event addresses, later corrections taking precedence. The window message also keeps the active goal, open todos and a bounded set of recent notes; exact raw evidence is recovered through the history tools.
 
 ## Installation
 
@@ -116,34 +109,28 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 
 4. Register the plugin in the profile's `cordis.patch.yml` (see Configuration below).
 
-5. Mount the windowing engine in the web presets (see [DSH web preset scope](#dsh-web-preset-scope)):
+5. Restart DSH and refresh the page.
 
-   ```bash
-   node scripts/sync-presets.mjs --profile web
-   ```
+### Upgrading from 0.3.x
 
-   The script re-runs the preflight before writing and leaves the profile untouched if it fails.
-
-6. Restart DSH and refresh the page.
+0.3.x mounted its own engine by restating the shipped presets in a generated block of the profile patch. That engine is gone, so delete the block between `# >>> context-management preset overrides` and `# <<< context-management preset overrides`, and change any remaining `@local/dsh-context-management/compaction` row back to `@deepseek-ai/dsh-compaction-basic`. Until you do, the preflight's *legacy preset overrides* check fails. The `handoffSummary` setting is gone too: a stored value is ignored, and every window now uses the native summary.
 
 ## Preflight check
 
-`scripts/preflight.mjs` checks that the target DSH **actually provides** each capability the plugin uses, and that nothing in the profile collides with it. It **never compares version numbers**: the requirement list is extracted from the `lib/` sources (DSH imports, `ctx.<service>.<method>` calls, events, session-log event types, base-class hooks, tool and command names), so new usages in the code are covered without touching the check.
+`scripts/preflight.mjs` checks that the target DSH **actually provides** each capability the plugin uses, and that nothing in the profile collides with it. It **never compares version numbers**: the requirement list is extracted from the `lib/` sources (DSH imports, `ctx.<service>.<method>` calls, events, session-log event types, tool and command names), so new usages in the code are covered without touching the check.
 
 | Check | Level | What it verifies |
 | --- | --- | --- |
 | DSH imports | fail | The target DSH packages really export the functions/classes the plugin imports |
-| Compaction hooks | fail | `BasicCompactionEngine`'s prototype has the methods the plugin overrides or calls (`summarize()`, `compactIfNeeded()`) |
+| Preset compaction | fail | The native engine has `compactIfNeeded()` and the preset registry has `serviceFor()`, the two seams `new_context` uses |
 | Host services | fail | The packages providing the services the plugin calls (`tools`, `sessions`, `commands`, `systemPrompt`, `settings`) have those methods |
 | Host events, session-log types | fail | DSH still emits the events and session event types the plugin listens for |
-| Web presets | fail | Some shipped preset mounts the native engine, so the windowing engine has a slot to take |
 | Notes storage | fail | The notes directory under `$DSH_HOME` is writable |
 | Tool and command names | fail | Neither DSH itself nor another profile plugin defines a tool or command with the same name |
-| Preset ownership | fail | The profile does not already override the same presets outside the generated block |
+| Legacy preset overrides | fail | The profile patch no longer mounts the 0.3.x engine |
 | Web client packages and services | warn | The client packages and `configForms`/`slots`/`locale` services behind the settings page exist; without them `/ctx` still works |
-| Other compaction engines | warn | Other profile plugins built on the compaction engine, to check they do not replace the same preset rows |
 
-It exits with code 1 when any fail-level check fails. `sync-presets.mjs` runs it before writing and in `--check`; run `--check` from your DSH start-up script and every start after an upgrade re-checks the capabilities. `--remove` (rollback) skips it.
+It exits with code 1 when any fail-level check fails. Running it after a DSH upgrade is optional: nothing in the profile depends on the DSH version.
 
 ## Configuration
 
@@ -155,37 +142,21 @@ It exits with code 1 when any fail-level check fails. `sync-presets.mjs` runs it
         enabled: true
         overrideCompaction: true
         injectTools: true
-        defaultStrategy: window      # or native: models not listed in modelPolicies use native summaries
+        defaultStrategy: window      # or native: models not listed in modelPolicies get no window messages
         modelPolicies: []            # e.g. [{ provider: deepseek, model: deepseek-chat, strategy: native }]
-        handoffSummary: generated    # or extractive: no extra model call
-        handoffMaxChars: 16000       # 8000–32000
+        handoffMaxChars: 8000        # 4000–32000
 ```
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Enable context management for every session of this DSH instance; this is what `/ctx` toggles |
-| `overrideCompaction` | `true` | Replace native summaries with window handoffs (summary + goal/todo + recent instructions + notes + window index) plus history recall |
-| `injectTools` | `true` | Provide the notes/history/new_context tools; when off, native summary compaction is used |
-| `defaultStrategy` | `window` | Default compaction strategy; `native` makes unlisted models use native summaries |
+| `overrideCompaction` | `true` | Append the window message after each native compaction and open a new window |
+| `injectTools` | `true` | Provide the notes/history/new_context tools; when off, compaction is purely native |
+| `defaultStrategy` | `window` | Default strategy; `native` makes unlisted models compact natively without window messages |
 | `modelPolicies` | `[]` | Per exact provider/model strategy overrides; the first match wins |
-| `handoffSummary` | `generated` | Body of the handoff: `generated` calls the native summary model once; `extractive` only excerpts records |
-| `handoffMaxChars` | `16000` | Maximum characters of the window handoff |
+| `handoffMaxChars` | `8000` | Maximum characters of the window message, not counting the native summary |
 
-`injectTools: false` removes the tools and uses native summaries, so history is never trimmed without a way to recover it. `overrideCompaction: false` keeps the notes/history tools while regular auto compaction and `/compact` use native summaries; the model can still request `new_context` explicitly.
-
-Unloading the host plugin removes the tools, the settings registration and the `contextWindows` service; preset engines then fall back to native summaries.
-
-### DSH web preset scope
-
-The web host provides no global `compaction`; compaction engines live in each preset's isolated scope. The loader cannot patch rows nested in a preset's `config.plugins` by id (only `group: true` lists are indexed), and a patch cannot rename a row. So `scripts/sync-presets.mjs` copies each `dsh-web-app` preset that mounts `dsh-compaction-basic` (currently standard/ptc/cordis) **in full** into a generated block of the profile patch, swapping only that row for `@local/dsh-context-management/compaction`; presets defined by the profile itself are swapped in place.
-
-```bash
-node scripts/sync-presets.mjs            # generate/refresh (saves cordis.patch.yml.pre-sync first)
-node scripts/sync-presets.mjs --check    # exit code 1 when the block is stale for the installed DSH (parsed YAML: re-folded lines and the profile's own additions to the block don't count)
-node scripts/sync-presets.mjs --remove   # delete the block and restore native rows (full rollback)
-```
-
-**Re-run it after every DSH upgrade**, or those three presets stay on the old definitions. Running `--check` from your DSH start-up script gives a log warning when they go stale. Do not edit standard/ptc/cordis in the web editor: the script refuses to write if it finds a same-id override outside the generated block. Adding to a restated row inside the block is yours to keep and is not stale, but a **regeneration rewrites the block and drops those additions** — the previous file stays as `cordis.patch.yml.pre-sync`.
+`injectTools: false` removes the tools and leaves compaction purely native, so history is never trimmed without a way to recover it. `overrideCompaction: false` keeps the notes/history tools while compaction runs without window messages; `new_context` is then refused.
 
 ## Verification
 
@@ -194,31 +165,28 @@ npm install
 npm run verify
 ```
 
-Tests need the DSH dev dependency; alternatively point `DSH_PACKAGE_DIR` at an installed `@deepseek-ai/dsh` package directory. All model responses are fixed local fixtures, so **the tests never call a paid model**. They run in a single-process Node test runner to avoid restarting the DSH test runtime.
+Tests need the DSH dev dependency; alternatively point `DSH_PACKAGE_DIR` at an installed `@deepseek-ai/dsh` package directory. The summarizer is a fixed local fixture on DSH's real `BasicCompactionEngine`, so **the tests never call a paid model**. They run in a single-process Node test runner to avoid restarting the DSH test runtime.
 
-Coverage includes the real Cordis lifecycle, DSH ToolRuntime, SettingsProvider, TokenMeter, BasicCompactionEngine and JSONL disk recovery, plus web settings binding, session isolation, tool pairing, cancellation, failure paths and capacity limits. The web tests check the state/write contract; they are not a full visual browser test.
+Coverage includes the real Cordis lifecycle, DSH ToolRuntime, SettingsProvider, TokenMeter, BasicCompactionEngine, `/compact`, overflow recovery and JSONL disk recovery, plus web settings binding, session isolation, tool pairing, cancellation, failure paths and capacity limits. The web tests check the state/write contract; they are not a full visual browser test.
 
 History reads are incremental: building state for 10,000 synthetic events takes ~2.5 ms the first time, and an unchanged re-read scans **0 events** (timings are indicative only; the regression tests pin incremental reads, scan limits and output limits).
 
-0.3.6 passes 108 tests on DSH 0.2.0-rc.2, including the preflight: a stand-in DSH missing one hook must make it report exactly that capability.
+0.4.0 passes 72 tests on DSH 0.2.1-rc.2, including the preflight: a stand-in DSH missing one seam must make it report exactly that capability.
 
 ## Code layout
 
 | Module | Responsibility |
 | --- | --- |
-| `lib/index.js` | Host plugin: config schema, tool and command registration, `contextWindows` service, settings changes |
-| `lib/compaction.js` | Preset compaction engine, a `BasicCompactionEngine` subclass that falls back to native behaviour without the host |
-| `lib/window-controller.js` / `window-engine.js` / `window-policy.js` | When to switch windows, building the handoff, per-model strategy |
+| `lib/index.js` | Host plugin: config schema, tool and command registration, compaction and pre-step listeners, settings changes |
+| `lib/window-controller.js` / `window-engine.js` / `window-policy.js` | Forced rotation through the preset's engine, the window message, per-model strategy |
 | `lib/handoff-note.js` | Writing `handoff.md` and `handoff-log.md` after each committed switch |
 | `lib/session-state.js` | Incremental per-session state projection (windows, goal/todo, pending requests) |
 | `lib/history-store.js` / `lib/tools/history.js` | Paged session-log recall and the history tools |
 | `lib/notes-store.js` / `lib/note-repository.js` / `lib/tools/notes.js` | In-memory note model, locked atomic persistence, the notes tools |
 | `lib/tools/new-context.js` | The `new_context` tool |
 | `lib/text.js` | Message text extraction and clipping |
-| `lib/section-budget.js` | Priority-aware clipping of a generated handoff, so no mandated section is deleted by an overrun |
 | `lib/client.js` | Web settings page (lazy-CJS client module) |
-| `scripts/preflight.mjs` | Pre-install capability check |
-| `scripts/sync-presets.mjs` / `presets.mjs` / `dsh-env.mjs` | Preset sync CLI, preset rewriting, locating DSH and the profile |
+| `scripts/preflight.mjs` / `dsh-env.mjs` | Pre-install capability check, locating DSH and the profile |
 
 ## License
 

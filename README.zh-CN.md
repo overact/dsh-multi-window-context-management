@@ -2,39 +2,36 @@
 
 [English](./README.md) · **简体中文**
 
-[DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 的换窗压缩、会话私有笔记和分页历史检索插件。借鉴 Codex 的多窗口思路，**不是 Codex API 的 1:1 移植，也不保证模型无损恢复全部语义**。
+[DeepSeek Harness（DSH）](https://github.com/deepseek-ai/deepseek-harness) 的换窗交接、会话私有笔记和分页历史检索插件。借鉴 Codex 的多窗口思路，**不是 Codex API 的 1:1 移植，也不保证模型无损恢复全部语义**。
 
 ## 当前适配
 
-版本 **0.3.6**，已针对 **DSH 0.2.0-rc.2 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
+版本 **0.4.0**，已针对 **DSH 0.2.1-rc.2 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
 
-- 通过 DSH 官方扩展点工作：`@local/dsh-context-management/compaction` 是 `BasicCompactionEngine` 的子类，重写官方子类钩子 `summarize()` 和动态分派的 `compactIfNeeded()`；不 monkey-patch 实例方法，不读取 Cordis 内部结构。
-- 复用原生的工具调用配对检查、保留近期对话、并发维护锁、取消、缩减检查、压缩事务、落盘和 overflow 重试。
-- 自动压缩仍由 DSH 原有回调驱动，插件不另建压缩循环。
-- 宿主插件发布 `contextWindows` 服务（会话状态与设置）；preset 里的引擎按调用查找它而非 `inject`。宿主缺席时引擎行为与原生完全一致，preset 不会因依赖缺失而失去压缩。
-- 只有挂载了该引擎的 preset 才能用 `new_context`；其他 preset 调用会明确报错，notes/history 工具仍可用。
-- 只有 DSH 真正提交替换消息，窗口编号才推进。失败、取消和无可压缩历史不会假报换窗成功。
-- 每次换窗都会生成一份有长度上限的交接。默认（`handoffSummary: generated`）对被换出的部分调用**一次**原生摘要模型，把摘要放进 `<generated_handoff>`，并与目标、待办、近期用户指令、近期笔记和窗口目录一起组成交接；强制状态段先渲染，正文拿剩余的全部字符，因此没用完的快照预留会回补给正文而不是被浪费；可选笔记预览有上限，无法侵占这份预留。超长时在小节之间按优先级让出空间，而不是从尾部截断，因此每个规定小节都能存活。`compaction/summary` 事件记录真实摘要模型的 provider/model/usage（即使正文最终退化为截取式），费用统计可见。摘要调用失败、或剩余预算放不下可用正文时，退回截取式交接，不阻塞换窗，并在窗口记录里写明原因（`generated_discarded: budget`）。`handoffSummary: extractive` 完全不额外调用模型。停用插件或工具时回退原生摘要生成。
+- **每个 preset 的压缩都保持原生。** 插件不替换、不继承、也不修补 DSH 的压缩引擎，不碰任何 preset。升级 DSH 不需要额外步骤，你自己新建的 preset 也自动生效。
+- 每次 DSH 提交一次压缩后，插件追加一条**窗口消息**：目标、待办、最近几条用户指令、近期笔记和窗口目录，由它开启下一个窗口。摘要本身就是 DSH 自己的 checkpoint，不改动、不截断，并保留真实的 provider/model/usage。
+- `new_context` 通过 `agentPresets.serviceFor(agent, 'compaction')` 找到调用者所在 preset 的引擎，请它强制压缩一次。原生的工具调用配对、近期保留、维护锁、取消、缩减检查、事务、落盘和 overflow 重试全部照常生效。
+- 只有 DSH 真正提交替换，窗口编号才推进。失败、取消和无可压缩历史不会假报换窗成功。
+- 卸载或停用插件后，压缩与 DSH 出厂行为完全一致。
 
 ## 工作原理
 
 ```mermaid
 flowchart TD
-  P["每一步开始前"] --> Q{"有 new_context 请求？"}
-  Q -- 否 --> U{"用量 ≥ 自动压缩阈值？"}
-  U -- 否 --> C["继续对话"]
-  U -- 是 --> K1["压缩旧消息<br/>原文保留最近 16%"]
-  Q -- 是 --> K0["压缩旧消息<br/>只留最后一条"]
-  M["手动 /compact"] --> K0
-  O["模型报上下文溢出"] --> K0
-  K0 & K1 --> S["调用一次摘要模型"]
-  S --> H["拼交接：摘要 + goal/todo<br/>+ 最近 4 条用户原文 + 笔记 + 窗口目录"]
-  H --> W["进入新窗口 win_N+1<br/>系统提示词和工具不变"]
-  W --> N["替换 handoff.md<br/>追加 handoff-log.md"]
-  W --> R["模型按需用 history_* / notes_*<br/>找回原始细节"]
+  P["每个 agent step 之前"] --> Q{"是否请求了 new_context？"}
+  Q -- 是 --> F["请该 preset 自己的引擎<br/>强制压缩一次"]
+  Q -- 否 --> D["DSH 自己的压力检查"]
+  M["手动 /compact"] --> N
+  O["服务商报告上下文溢出"] --> N
+  F --> N["DSH 原生压缩：<br/>一次摘要调用，checkpoint 替换较早的消息"]
+  D -- 超过阈值 --> N
+  N --> W["compaction/end → 插件追加窗口消息<br/>goal/todo + 最近 4 条用户指令原文 + 笔记 + 窗口目录"]
+  W --> E["进入窗口 win_N+1<br/>系统提示词与工具不变"]
+  W --> H["替换 handoff.md<br/>追加 handoff-log.md"]
+  E --> R["模型按需用 history_* / notes_*<br/>找回具体细节"]
 ```
 
-四种入口最后都走同一条换窗流程。摘要调用失败时退回截取式交接；停用插件时，DSH 原生压缩照常运行。阈值和原文保留量是 DSH 自己的设置（`thresholdRatio`、`headroomTokens`、`retainRatio`），插件不改动它们。
+会话发布事件期间不能再追加事件，所以窗口消息在 `compaction/end` 之后的一个微任务里追加。这一步仍然发生在压缩引擎继续执行之前，所以溢出后的重试请求已经带上它。阈值和原文保留量是 DSH 自己的设置（`thresholdRatio`、`headroomTokens`、`retainRatio`），插件不改动它们。
 
 ## 工具
 
@@ -42,15 +39,15 @@ flowchart TD
 | --- | --- |
 | `new_context` | 请求在下一个安全 step 边界换窗 |
 | `notes_write_file` / `notes_append_to_file` / `notes_read_file` / `notes_list_files_by_prefix` / `notes_search_contents` | 会话私有笔记，跨换窗与重启保留 |
-| `history_list_windows` / `history_list_items` / `history_read_item` / `history_search_contents` | 分页检索本会话的完整原始历史；`history_read_item` 也能读取每份交接都会打印的窗口摘要、目标与清单 item ID |
+| `history_list_windows` / `history_list_items` / `history_read_item` / `history_search_contents` | 分页检索本会话的完整原始历史；`history_read_item` 也能读取每条窗口消息都会打印的摘要、目标与清单 item ID |
 
 ## 使用
 
-`/ctx` 切换开关；`/compact` 执行当前压缩方式。开关作用于**当前 DSH 实例的所有会话**，不是某个聊天标签。
+`/ctx` 切换开关；`/compact` 执行 DSH 原生压缩，完成后开启新窗口。开关作用于**当前 DSH 实例的所有会话**，不是某个聊天标签。
 
-模型调用 `new_context` 时，返回的是 **requested**，不是 reset：换窗安排在下一个安全 step 边界，本步工具结果会先完整写入历史。若 DSH 的 `auto` 关闭，插件仍处理显式换窗请求。
+模型调用 `new_context` 时，返回的是 **requested**，不是 reset：换窗安排在下一个安全 step 边界，本步工具结果会先完整写入历史。若 DSH 的 `auto` 关闭，插件仍处理显式换窗请求。没有压缩引擎的 preset 会明确拒绝 `new_context`，notes/history 工具仍可用。
 
-网页“上下文管理”页使用 DSH 0.2.0 的 `configForms`，与 `/ctx` 共用后端设置。读取失败、只读连接和保存失败不会伪装成切换成功。设置修改无需重启。所有注册都走 Cordis 生命周期：热插拔（卸载 + 重新挂载）会移除全部 10 个工具、`/ctx` 命令、系统提示词段和 `contextWindows` 服务，再重新各装一份，笔记从持久存储重建；preset 引擎每次调用都会重新绑定新的状态存储，宿主缺席时退回原生摘要。DSH 的 `hmr` 只监视它配置的 `root` 目录，把本插件的 `lib` 加进去即可改代码即重载；否则**升级插件代码后，运行中的 DSH 仍需要重载插件或重启，并刷新网页**。
+网页“上下文管理”页使用 DSH 的 `configForms`，与 `/ctx` 共用后端设置。读取失败、只读连接和保存失败不会伪装成切换成功。设置修改无需重启。所有注册都走 Cordis 生命周期：热插拔（卸载 + 重新挂载）会移除全部 10 个工具、`/ctx` 命令、系统提示词段和两个监听器，再重新各装一份，笔记从持久存储重建。DSH 的 `hmr` 只监视它配置的 `root` 目录，把本插件的 `lib` 加进去即可改代码即重载；否则**升级插件代码后，运行中的 DSH 仍需要重载插件或重启，并刷新网页**。
 
 ## 保存与恢复
 
@@ -59,11 +56,11 @@ flowchart TD
 - `item_<seq>` 是稳定事件地址，不重复索引、不因条目数超过 2,000 而丢弃旧记录。
 - 原生工具结果通过 call ID 关联名称；`tool/code-dispatch`（PTC）也可检索。
 - `history_read_item` 的 `format: "json"` 可分页读取完整原始事件，包括调用参数和元数据。
-- 每个窗口按原生 checkpoint 替换事件划分。保留尾部的旧事件仍归属于其最初产生的窗口。
+- 窗口按插件的窗口消息划分，每条消息通过 `<window_record>` 对应到它的那次压缩。保留尾部的旧事件仍归属于其最初产生的窗口。0.3.x 写下的会话（交接放在摘要里）仍能正常读取。
 
 笔记按会话隔离，默认路径为 `self/notes/<path>`，**不开放任意跨会话读写**。文件位于插件自有目录 `$DSH_HOME/context-management/notes/<sessionId>.json`（`$DSH_HOME` 由 `dsh-home-paths` 解析），不依赖会话持久化后端的私有布局；使用 DSH 原子写入与跨进程文件锁。失败不会把未保存状态替换进缓存。
 
-每次换窗提交后（自动、`/compact` 或 `new_context`），插件会自己写两份笔记：`handoff.md` 整份替换为最新一次的完整交接，不截断（生成式交接取摘要模型的原始输出）；`handoff-log.md` 追加一行，记录窗口、时间、摘要条目和首行内容。完整内容只保留最新一份，因为每次生成的摘要都已合并了上一份；更早的交接仍可用 `history_read_item` 读取。这两份笔记不会再注入下一次交接，因为交接正文里已经有相同内容。压缩被取消或失败时不写；笔记写入失败只记日志，不阻塞换窗。
+每次换窗提交后（自动、`/compact` 或 `new_context`），插件会自己写两份笔记：`handoff.md` 整份替换为最新一次的完整摘要（摘要模型的原始输出）；`handoff-log.md` 追加一行，记录窗口、时间、摘要条目和首行内容。完整内容只保留最新一份，因为每次的摘要都已合并了上一份；更早的仍可用 `history_read_item` 读取。这两份笔记不会注入窗口消息，因为摘要已经在对话里。压缩被取消或失败时不写；笔记写入失败只记日志，不阻塞换窗。
 
 笔记按需加载，不在启动时读取全部会话。恢复后重建窗口元数据并加载该会话笔记；未完成的临时换窗请求不会因重启而重新执行。
 
@@ -73,8 +70,8 @@ flowchart TD
 
 | 操作 | 默认值 / 硬上限 |
 | --- | --- |
-| 换窗交接（`handoffMaxChars`） | 默认 16,000 字符，可设置 8,000–32,000 |
-| 注入笔记 | 最近最多 8 个，每个最多约 1,800 字符，仍受交接总预算限制 |
+| 窗口消息（`handoffMaxChars`） | 默认 8,000 字符，可设置 4,000–32,000；原生摘要另计，长度由 DSH 自己的 `maxTokens` 决定 |
+| 注入笔记 | 最近最多 8 个，每个最多约 1,200 字符，仍受窗口消息总预算限制 |
 | 单文件笔记 | 1,000,000 UTF-8 字节 |
 | 每会话笔记总量 | 64 个文件 / 4,000,000 UTF-8 字节；超限明确拒绝，不静默淘汰 |
 | 历史列表 / 搜索 | 默认 20 条，最多 50 条；每条默认 400 字符，最多 1,000 |
@@ -85,11 +82,7 @@ flowchart TD
 
 历史查询返回 `has_more` 和 `next_cursor`；继续查询时保持过滤条件与顺序。正文读取使用 `next_offset_chars`。搜索默认区分大小写，可设置 `case_sensitive: false`。
 
-交接按时间顺序引用最近四条用户指令，每条最多 1,000 字符，并标明事件地址，后续修正优先。交接同时保留活动 goal、未完成 todo 和有限的近期笔记。具体原始证据通过历史工具恢复。
-
-宿主规定的 8 个小节把 `## Critical Context` 放在最后，因此「从尾部截断」最先删掉的正是决策、约束和未决问题。正文改为**按优先级裁剪**而不是砍尾巴。每一块（前言以及每个 `## ` 小节）先保留一份标记预留，优先级分配因此不会把任何一块清空到连标记都没有；再拿一小段保底，使它至少留下自己的部分文字；剩下的才按权重分配。保底是预算份额，不保证其中包含完整的一条 bullet 或完整路径。`Critical Context`、`Next Step`、`Pending Jobs`、`Current Work` 拿较大份额，`Files and Code`（最长的路径与代码摘录）最先让步。这个顺序是**偏好而不是保证**：分节排版放得下时每个小节都保住标题，但预算连「标题 + 标记」都覆盖不了时仍会被压缩。裁剪切进代码围栏内部时会补上闭合围栏，而不是留下未闭合围栏——未闭合的围栏会把后面所有标题变成代码，让下一代压缩丢掉它之后的小节。闭合围栏放不下时改为从围栏处退出，丢掉的字符由回执而不是标记来交代，因为标记本身也会落在围栏内部；若退出会把剩余字符全部删光，则放弃修复、原样交出这段摘录。裁剪也不会切断代理对。
-
-被裁过的小节以 `… [truncated]` 结尾；正文旁还有一行机器生成的 `<clipping_receipt>`，说明保留了多少源字符、本次裁剪压短了哪些块（含保留/原始字符数），并指向本窗口的摘要条目（用 `history_read_item` 的 JSON 模式）读取未裁剪原文。摘要模型自己写的标记不能作为「这一节不完整」的可靠证据，回执可以，而且它会存活到下一份交接里。回执只描述本次裁剪，不能证明摘要模型没有遗漏；当回复不是分节结构、或分节排版放不下时，它会写明实际原因。只有确实需要裁剪时才会占用它的预留配额。
+窗口消息按时间顺序引用最近四条用户指令，每条最多 1,000 字符，并标明事件地址，后续修正优先。窗口消息同时保留活动 goal、未完成 todo 和有限的近期笔记。具体原始证据通过历史工具恢复。
 
 ## 安装
 
@@ -116,34 +109,28 @@ flowchart TD
 
 4. 在 profile 的 `cordis.patch.yml` 中注册插件（见下方配置）。
 
-5. 让 Web preset 挂载换窗引擎（见 [DSH Web preset 作用域](#dsh-web-preset-作用域)）：
+5. 重启 DSH 并刷新网页。
 
-   ```bash
-   node scripts/sync-presets.mjs --profile web
-   ```
+### 从 0.3.x 升级
 
-   该脚本写入前会再次运行安装前检查，失败时不修改 profile。
-
-6. 重启 DSH 并刷新网页。
+0.3.x 通过在 profile patch 的生成块里整份复制自带 preset 来挂载自己的引擎。这个引擎已经移除，所以请删掉 `# >>> context-management preset overrides` 到 `# <<< context-management preset overrides` 之间的整块，并把其余位置残留的 `@local/dsh-context-management/compaction` 行改回 `@deepseek-ai/dsh-compaction-basic`。改完之前，安装前检查的「旧版 preset 覆盖」项会失败。`handoffSummary` 设置也已移除：已保存的值会被忽略，每次换窗都使用原生摘要。
 
 ## 安装前检查
 
-`scripts/preflight.mjs` 检查目标 DSH 是否**真的提供**插件用到的每项功能，以及 profile 中是否有冲突。它**不比较版本号**：检查清单从 `lib/` 源码中自动提取（DSH 导入、`ctx.<服务>.<方法>` 调用、事件、会话日志事件类型、基类钩子、工具名与命令名），代码新增用法时无需修改检查脚本。
+`scripts/preflight.mjs` 检查目标 DSH 是否**真的提供**插件用到的每项功能，以及 profile 中是否有冲突。它**不比较版本号**：检查清单从 `lib/` 源码中自动提取（DSH 导入、`ctx.<服务>.<方法>` 调用、事件、会话日志事件类型、工具名与命令名），代码新增用法时无需修改检查脚本。
 
 | 检查 | 级别 | 内容 |
 | --- | --- | --- |
 | DSH 导入 | 失败 | 目标 DSH 的包确实导出插件导入的函数/类 |
-| 压缩钩子 | 失败 | `BasicCompactionEngine` 原型上有插件重写/调用的方法（`summarize()`、`compactIfNeeded()`） |
+| preset 压缩 | 失败 | 原生引擎有 `compactIfNeeded()`，preset 注册表有 `serviceFor()`，即 `new_context` 用到的两个接口 |
 | 宿主服务 | 失败 | 提供插件所调用服务（`tools`、`sessions`、`commands`、`systemPrompt`、`settings`）的包里存在对应方法 |
 | 宿主事件、会话日志类型 | 失败 | DSH 仍会发出插件监听的事件和会话事件类型 |
-| Web preset | 失败 | 有自带 preset 挂载原生压缩引擎，换窗引擎才有位置可挂 |
 | 笔记存储 | 失败 | `$DSH_HOME` 下的笔记目录可写 |
 | 工具名、命令名 | 失败 | DSH 本身或 profile 中其他插件没有定义同名工具或命令 |
-| preset 归属 | 失败 | profile 没有在生成块之外覆盖同一批 preset |
+| 旧版 preset 覆盖 | 失败 | profile patch 不再挂载 0.3.x 的引擎 |
 | 网页端包与服务 | 警告 | 设置页依赖的客户端包和 `configForms`/`slots`/`locale` 服务存在；缺失时 `/ctx` 仍可用 |
-| 其他压缩引擎 | 警告 | profile 中其他基于压缩引擎的插件，提示检查是否替换同一 preset 行 |
 
-有失败项时退出码为 1。`sync-presets.mjs` 的写入和 `--check` 都会先运行它；在 DSH 启动脚本里运行 `--check`，每次升级后启动时就会按功能复查一次。`--remove` 回滚不做检查。
+有失败项时退出码为 1。DSH 升级后运行它是可选的：profile 里没有任何内容依赖 DSH 版本。
 
 ## 配置
 
@@ -155,37 +142,21 @@ flowchart TD
         enabled: true
         overrideCompaction: true
         injectTools: true
-        defaultStrategy: window      # 或 native：未在 modelPolicies 中列出的模型使用原生摘要
+        defaultStrategy: window      # 或 native：未在 modelPolicies 中列出的模型不追加窗口消息
         modelPolicies: []            # 例：[{ provider: deepseek, model: deepseek-chat, strategy: native }]
-        handoffSummary: generated    # 或 extractive：无额外模型调用
-        handoffMaxChars: 16000       # 8000–32000
+        handoffMaxChars: 8000        # 4000–32000
 ```
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `enabled` | `true` | 启用上下文管理（当前 DSH 实例的所有会话）；`/ctx` 切换的就是它 |
-| `overrideCompaction` | `true` | 用换窗交接（摘要 + goal/todo + 近期指令 + 笔记 + 窗口目录）和历史检索替换原生摘要 |
-| `injectTools` | `true` | 启用 notes/history/new_context 工具；关闭时使用原生摘要压缩 |
-| `defaultStrategy` | `window` | 默认压缩策略；`native` 让未列出的模型使用原生摘要 |
+| `overrideCompaction` | `true` | 每次原生压缩后追加窗口消息并开启新窗口 |
+| `injectTools` | `true` | 启用 notes/history/new_context 工具；关闭时压缩完全是原生的 |
+| `defaultStrategy` | `window` | 默认策略；`native` 让未列出的模型只做原生压缩、不追加窗口消息 |
 | `modelPolicies` | `[]` | 按精确 provider/model 覆盖策略，首个匹配项生效 |
-| `handoffSummary` | `generated` | 交接主体：`generated` 调用一次原生摘要模型；`extractive` 只截取记录 |
-| `handoffMaxChars` | `16000` | 换窗交接内容的最大字符数 |
+| `handoffMaxChars` | `8000` | 窗口消息的最大字符数，不含原生摘要 |
 
-`injectTools: false` 会移除工具并使用原生摘要，避免裁剪之后无工具可恢复历史。`overrideCompaction: false` 保留 notes/history 工具，普通自动压缩和 `/compact` 使用原生摘要；模型仍可显式请求 `new_context`。
-
-卸载宿主插件会移除工具、设置注册和 `contextWindows` 服务；preset 中的引擎随即回到原生摘要行为。
-
-### DSH Web preset 作用域
-
-Web 宿主不提供全局 `compaction`，压缩引擎位于各 preset 的隔离作用域。Loader 无法按 id 修改 preset `config.plugins` 里的子行（只有 `group: true` 列表会被索引），patch 也不能改行的 `name`。因此由 `scripts/sync-presets.mjs` 把 `dsh-web-app` 自带的、挂载 `dsh-compaction-basic` 的 preset（当前为 standard/ptc/cordis）**整行复制**到 profile patch 的生成块中，只把那一行换成 `@local/dsh-context-management/compaction`；profile 自己定义的 preset 原地替换。
-
-```bash
-node scripts/sync-presets.mjs            # 生成/刷新（写入前保存 cordis.patch.yml.pre-sync）
-node scripts/sync-presets.mjs --check    # 生成块与已安装 DSH 不一致时退出码 1（按解析后的 YAML 比较；DSH 重新折行、profile 在块内的补充都不算不一致）
-node scripts/sync-presets.mjs --remove   # 删除生成块并恢复原生行，完全回滚
-```
-
-**每次升级 DSH 后必须重新运行**，否则这三个 preset 会停留在旧版本定义。建议在 DSH 的启动脚本里运行 `--check`，过期时在日志中告警。不要在网页编辑器里修改 standard/ptc/cordis：脚本发现生成块外存在同 id 覆盖时会拒绝写入。在块内重述的行上做补充属于你自己的编辑，会保留、也不算过期；但**重新生成会整块重写并丢弃这些补充**——旧文件会留在 `cordis.patch.yml.pre-sync`。
+`injectTools: false` 会移除工具，压缩完全走原生，避免裁剪之后无工具可恢复历史。`overrideCompaction: false` 保留 notes/history 工具，压缩时不追加窗口消息，此时 `new_context` 会被拒绝。
 
 ## 验证
 
@@ -194,31 +165,28 @@ npm install
 npm run verify
 ```
 
-测试需要 DSH 开发依赖；也可用 `DSH_PACKAGE_DIR` 指向已经安装的 `@deepseek-ai/dsh` 包目录。所有模型响应均为固定本地 fixture，**测试不调用付费模型**。使用单进程 Node test runner，避免重复启动 DSH 测试运行时。
+测试需要 DSH 开发依赖；也可用 `DSH_PACKAGE_DIR` 指向已经安装的 `@deepseek-ai/dsh` 包目录。摘要模型是挂在 DSH 真实 `BasicCompactionEngine` 上的固定本地 fixture，**测试不调用付费模型**。使用单进程 Node test runner，避免重复启动 DSH 测试运行时。
 
-验证覆盖真实 Cordis 生命周期、DSH ToolRuntime、SettingsProvider、TokenMeter、BasicCompactionEngine、JSONL 磁盘恢复，以及网页设置绑定、会话隔离、工具配对、取消、失败路径和容量限制。网页测试检查状态/写入契约，不等同于完整浏览器视觉测试。
+验证覆盖真实 Cordis 生命周期、DSH ToolRuntime、SettingsProvider、TokenMeter、BasicCompactionEngine、`/compact`、溢出恢复、JSONL 磁盘恢复，以及网页设置绑定、会话隔离、工具配对、取消、失败路径和容量限制。网页测试检查状态/写入契约，不等同于完整浏览器视觉测试。
 
 历史读取是增量的：10,000 条合成事件的首次状态构建约 2.5 ms，未变化时重复读取扫描 **0 条事件**（绝对时间仅供参考；回归测试约束的是增量读取、扫描上限和输出上限）。
 
-0.3.6 在 DSH 0.2.0-rc.2 上通过 108 项测试（含安装前检查：用只缺少某个钩子的替身 DSH 验证它只报告该项功能）。
+0.4.0 在 DSH 0.2.1-rc.2 上通过 72 项测试（含安装前检查：用只缺少某个接口的替身 DSH 验证它只报告该项功能）。
 
 ## 代码结构
 
 | 模块 | 职责 |
 | --- | --- |
-| `lib/index.js` | 宿主插件：配置 schema、工具与命令注册、`contextWindows` 服务、设置变更 |
-| `lib/compaction.js` | preset 中的压缩引擎，`BasicCompactionEngine` 子类，宿主缺席时退回原生行为 |
-| `lib/window-controller.js` / `window-engine.js` / `window-policy.js` | 换窗时机、交接内容构建、按模型选择策略 |
+| `lib/index.js` | 宿主插件：配置 schema、工具与命令注册、压缩与 pre-step 监听、设置变更 |
+| `lib/window-controller.js` / `window-engine.js` / `window-policy.js` | 通过 preset 引擎强制换窗、窗口消息、按模型选择策略 |
 | `lib/handoff-note.js` | 每次换窗提交后写 `handoff.md` 和 `handoff-log.md` |
 | `lib/session-state.js` | 每个会话的增量状态投影（窗口、goal/todo、待处理请求） |
 | `lib/history-store.js` / `lib/tools/history.js` | 会话日志的分页检索与 history 工具 |
 | `lib/notes-store.js` / `lib/note-repository.js` / `lib/tools/notes.js` | 内存笔记模型、带锁的原子落盘、notes 工具 |
 | `lib/tools/new-context.js` | `new_context` 工具 |
 | `lib/text.js` | 消息文本提取与截断 |
-| `lib/section-budget.js` | 生成式交接的按优先级裁剪，避免某个规定小节被超长内容整节删掉 |
 | `lib/client.js` | 网页设置页（lazy-CJS 客户端模块） |
-| `scripts/preflight.mjs` | 安装前功能检查 |
-| `scripts/sync-presets.mjs` / `presets.mjs` / `dsh-env.mjs` | preset 同步 CLI、preset 改写逻辑、DSH 与 profile 定位 |
+| `scripts/preflight.mjs` / `dsh-env.mjs` | 安装前功能检查、DSH 与 profile 定位 |
 
 ## 许可证
 

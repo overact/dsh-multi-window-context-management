@@ -49,12 +49,12 @@ async function longSession(f, { summaryChars = 18_624, summarizer } = {}) {
   turn(s, 1, 'output '.repeat(2_500));
   turn(s, 2, 'more output '.repeat(2_000));
   user(s, 'Now compress manually.');
-  f.native.nativeSummarize = summarizer ?? summarizerStub(summaryChars);
+  f.native.summarizer = summarizer ?? summarizerStub(summaryChars);
   return { agent, s };
 }
 
-test('manual /compact rotates a window instead of summarizing natively', async t => {
-  const f = await fixture({ config: { handoffMaxChars: 16000 } }); t.after(f.dispose);
+test('manual /compact summarizes natively once and opens a window', async t => {
+  const f = await fixture(); t.after(f.dispose);
   await withCompactCommand(f);
   const { agent, s } = await longSession(f);
   const meter = f.ctx.tokenMeter;
@@ -62,75 +62,37 @@ test('manual /compact rotates a window instead of summarizing natively', async t
   const result = await f.ctx.commands.execute(agent, '/compact', [], signal());
   await f.plugin.handoffWrites;
   assert.equal(result.result.kind, 'success');
-  // The manual path runs the same windowing engine as automatic pressure.
+  assert.equal(f.legacyCalls, 1, 'exactly one native summarizer call');
   assert.equal(f.plugin.states.get(s).windows.at(-1).window_id, 'win_002');
   assert.equal(f.plugin.states.get(s).windows[0].summary_kind, 'generated');
-  assert.equal(f.legacyCalls, 0, 'the windowing summarizer handled the manual request');
   assert.equal(f.plugin.states.get(s).notes.readFile('self', 'handoff.md').content.split('\n')[0],
     '# Latest handoff: win_001 → win_002');
+  // What remains is the native summary (sized by DSH's maxTokens, ~4.6k tokens
+  // here) plus the window message bounded by handoffMaxChars.
   const after = meter.measure(s).totalTokens;
-  assert.ok(after < before * 0.25, `${after} is not well below ${before}`);
+  assert.ok(after < before / 3, `${after} is not well below ${before}`);
 });
 
-test('the manual handoff spends its declared budget instead of stranding it', async t => {
+test('the full summary reaches the model, and the window message stays within its budget', async t => {
   const f = await fixture({ config: { handoffMaxChars: 16000 } }); t.after(f.dispose);
   await withCompactCommand(f);
   const { agent, s } = await longSession(f);
   await f.ctx.commands.execute(agent, '/compact', [], signal());
   await f.plugin.handoffWrites;
   const event = s.snapshotEvents().filter(e => e.type === 'compaction/summary').at(-1);
-  const header = event.data.summary[0].text;
-  const body = header.match(/<generated_handoff>\n([\s\S]*?)\n<\/generated_handoff>/)?.[1] ?? '';
-  assert.ok(header.length <= 16000, `${header.length} > 16000`);
-  // Regression guard: the snapshot allowance used to strand ~5k characters while
-  // the body was pinned near 7.5k at every cap.
-  assert.ok(body.length > 9_000, `body ${body.length} did not reclaim the unused reserve`);
-  assert.match(header, /Session goal \[item_\d+\] phase=active/);
-  assert.match(header, /Session checklist \[item_\d+\]/);
-  assert.match(header, /^Note self\/notes\//m);
-  // A successful auxiliary call keeps its real envelope on the durable record.
+  // Nothing clips the summary any more: the checkpoint carries all of it.
+  assert.equal(event.data.summary[0].text.length, '## Primary Request and Intent\n'.length + 18_624);
   assert.equal(event.data.provider, 'fixture-provider');
-  assert.equal(event.data.model, 'fixture-summarizer');
   assert.deepEqual(event.data.usage, { inputTokens: 20_000, outputTokens: 5_000 });
-  assert.equal((event.data.rawOutput?.[0]?.text ?? '').length >= 18_624, true);
-  // The ID this handoff advertises must resolve through the real tool surface.
+  const message = s.snapshotEvents().filter(e => e.data.source?.kind === 'plugin:context-management').at(-1).data.content[0].text;
+  assert.ok(message.length <= 16000, `${message.length} > 16000`);
+  assert.match(message, /Session goal \[item_\d+\] phase=active/);
+  assert.match(message, /Session checklist \[item_\d+\]/);
+  assert.match(message, /^Note self\/notes\//m);
+  // The ID the window message advertises must resolve through the real tool surface.
   const read = await f.execute(agent, 'history_read_item', { item_id: `item_${event.seq}` });
   assert.equal(read.isError, false);
-  assert.match(read.value.content, /<context_window id="win_002"/);
+  assert.match(read.value.content, /^## Primary Request and Intent/);
   const history = new HistoryStore(s, f.plugin.states);
-  assert.ok(history.readItem({ item_id: history.listWindows({ recent_first: false })[0].summary_item_id }));
-});
-
-test('an overflowing reply keeps Critical Context through the whole /compact path', async t => {
-  const f = await fixture({ config: { handoffMaxChars: 16000 } }); t.after(f.dispose);
-  await withCompactCommand(f);
-  // The eight sections the host's directive mandates, sized like the live reply
-  // that overflowed: ~15.7k characters against a ~12.9k grant.
-  const titles = ['Primary Request and Intent', 'Key Technical Concepts', 'Files and Code',
-    'Errors and Fixes', 'Pending Jobs', 'Current Work', 'Next Step', 'Critical Context'];
-  const sizes = [1331, 2229, 4708, 3356, 300, 936, 512, 2336];
-  const text = titles.map((title, i) => {
-    const head = `## ${title}\n`, bullet = `- ${title.toLowerCase()} detail\n`;
-    return head + bullet.repeat(Math.ceil((sizes[i] - head.length) / bullet.length)).slice(0, sizes[i] - head.length);
-  }).join('\n');
-  const { agent, s } = await longSession(f, {
-    summarizer: async () => {
-      const summary = [{ type: 'text', text }];
-      return { summary, rawOutput: summary, provider: 'fixture-provider', model: 'fixture-summarizer',
-        maxTokens: 4000, llmStreamCall: true, usage: { inputTokens: 20_000, outputTokens: 5_000 } };
-    },
-  });
-  await f.ctx.commands.execute(agent, '/compact', [], signal());
-  await f.plugin.handoffWrites;
-  const event = s.snapshotEvents().filter(e => e.type === 'compaction/summary').at(-1);
-  const header = event.data.summary[0].text;
-  assert.ok(header.length <= 16000, `${header.length} > 16000`);
-  assert.ok(event.data.rawOutput[0].text.length > text.length - 1, 'the reply really did overflow');
-  const body = header.match(/<generated_handoff>\n([\s\S]*?)\n<\/generated_handoff>/)[1];
-  assert.ok(event.data.rawOutput[0].text.length > body.length + 1_000,
-    `reply ${event.data.rawOutput[0].text.length} did not overflow body ${body.length}`);
-  assert.deepEqual([...body.matchAll(/^## (.+)$/gm)].map(m => m[1]), titles);
-  // The section the host writes last is the one the old tail cut deleted.
-  assert.match(body, /## Critical Context\n- critical context detail/);
-  assert.match(body, /## Files and Code\n[\s\S]*… \[truncated\]/);
+  assert.equal(history.listWindows({ recent_first: false })[0].summary_item_id, `item_${event.seq}`);
 });

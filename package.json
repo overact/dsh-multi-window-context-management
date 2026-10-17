@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-context-management",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "private": true,
-  "description": "Windowed compaction for DeepSeek Harness (DSH) with session-private notes and paged history recall",
+  "description": "Windowed context handoffs on top of DeepSeek Harness (DSH) native compaction, with session-private notes and paged history recall",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/overact/dsh-context-management.git"
@@ -15,16 +15,13 @@
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
-    "./compaction": "./lib/compaction.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
     "scripts/dsh-env.mjs",
-    "scripts/presets.mjs",
     "scripts/preflight.mjs",
-    "scripts/sync-presets.mjs",
     "README.md",
     "README.zh-CN.md",
     "LICENSE",
@@ -65,7 +62,6 @@
     "@deepseek-ai/schemastery": "^3.18.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-compaction-basic": ">=0.1.7-alpha.1 || >=0.2.0-0",
     "@deepseek-ai/dsh-llm": ">=0.1.7-alpha.1 || >=0.2.0-0",
     "@deepseek-ai/dsh-atomic-write": ">=0.1.7-alpha.1 || >=0.2.0-0",
     "@deepseek-ai/dsh-home-paths": ">=0.1.7-alpha.1 || >=0.2.0-0"

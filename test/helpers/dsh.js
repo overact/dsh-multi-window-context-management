@@ -16,10 +16,20 @@ export const { Context } = await dsh('cordis');
 export const { Session, SessionStore } = await dsh('dsh-session');
 export const { TokenMeter } = await dsh('dsh-token-meter');
 export const { BasicCompactionEngine } = await dsh('dsh-compaction-basic');
-export const { WindowingCompactionEngine } = await import('../../lib/compaction.js');
 export const { SettingsProvider } = await dsh('dsh-settings');
 export const { SystemPrompt } = await dsh('dsh-system-prompt');
 export const llm = await dsh('dsh-llm');
+
+/** BasicCompactionEngine with a fixture summarizer: `summarize()` is DSH's
+ * documented customization hook, the rest of the engine runs unchanged. */
+export class FixtureCompactionEngine extends BasicCompactionEngine {
+  summarizer = null;
+  onSummarize = null;
+  summarize(input, agent, signal) {
+    this.onSummarize?.();
+    return this.summarizer(input, agent, signal);
+  }
+}
 
 export function user(session, text) {
   return session.append('user/message', llm.createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }), { surfaceOp: 'append' });
@@ -67,14 +77,15 @@ export async function fixture(options = {}) {
   ctx.on('session/flush', session => { persisted.set(session.id, structuredClone(session.snapshotEvents())); });
   const handles = new Map();
   const handleApi = typeof storage.open === 'function';
-  const native = options.noHostCompaction ? null : new WindowingCompactionEngine(ctx, { auto: options.auto ?? true, retainTokens: 800, headroomTokens: 1024 });
+  // DSH's own engine, untouched; only its LLM summarizer is a fixture, so tests
+  // never call a paid model. `native.summarizer` swaps that fixture per test.
+  const native = options.noHostCompaction ? null : new FixtureCompactionEngine(ctx, { auto: options.auto ?? true, retainTokens: 800, headroomTokens: 1024 });
   let legacyCalls = 0;
-  // Stand-in for the base LLM summarizer; tests never call a paid model.
-  if (native) native.nativeSummarize = async () => {
-    legacyCalls++;
-    const summary = [{ type: 'text', text: 'Fixture legacy summary.' }];
+  if (native) native.summarizer = async () => {
+    const summary = [{ type: 'text', text: 'Fixture native summary.' }];
     return { summary, rawOutput: summary, provider: 'fixture', model: 'fixture' };
   };
+  if (native) native.onSummarize = () => { legacyCalls++; };
   let plugin;
   const module = await import('../../lib/index.js');
   const fiber = ctx.plugin({ ...module.default, apply(child, config) { plugin = module.apply(child, config); } }, options.config ?? {});
@@ -89,9 +100,6 @@ export async function fixture(options = {}) {
       ctx.sessions.announce(session);
       return detach;
     });
-    // Real agents pass agent/pre-step, where a windowing engine marks the
-    // session as served, before any tool call.
-    if (native) plugin.contextWindows.serve(session);
     let busy = false;
     return { id, session, options: { provider: 'fixture', model: 'fixture' },
       runMaintenance(task) {
