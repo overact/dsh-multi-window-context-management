@@ -24,7 +24,7 @@ test('the host plugin hot-swaps: unload removes every registration and re-apply 
   const promptSections = async () => JSON.stringify(await f.ctx.systemPrompt.assemble({})).split(PROMPT_MARKER).length - 1;
 
   await f.plugin.states.writeNote(s, 'durable.md', 'survives a reload');
-  assert.equal(tools(), 10);
+  assert.equal(tools(), 5);
   assert.deepEqual(commandNames().filter(n => n === 'ctx'), ['ctx']);
   assert.equal(await promptSections(), 1);
   assert.equal(f.ctx.get('contextWindows')?.states, f.plugin.states);
@@ -37,15 +37,15 @@ test('the host plugin hot-swaps: unload removes every registration and re-apply 
     assert.equal(commandNames().includes('ctx'), false, `cycle ${cycle}: command leaked`);
     assert.equal(await promptSections(), 0, `cycle ${cycle}: prompt section leaked`);
     assert.equal(f.ctx.get('contextWindows'), undefined, `cycle ${cycle}: service leaked`);
-    assert.equal((await f.execute(a, 'notes_read_file', { path: 'durable.md' })).isError, true);
+    assert.equal((await f.execute(a, 'notes_read', { path: 'durable.md' })).isError, true);
     ({ fiber: f.fiber } = await applyHost(f.ctx));
   }
 
-  assert.equal(tools(), 10, 'tool count must not double');
+  assert.equal(tools(), 5, 'tool count must not double');
   assert.deepEqual(commandNames().filter(n => n === 'ctx'), ['ctx'], 'command must not double');
   assert.equal(await promptSections(), 1, 'prompt section must not double');
   // Notes are rebuilt from their durable store, not from the dead instance.
-  const note = await f.execute(a, 'notes_read_file', { path: 'durable.md' });
+  const note = await f.execute(a, 'notes_read', { path: 'durable.md' });
   assert.equal(note.isError, false);
   assert.equal(note.value.content, 'survives a reload');
 });

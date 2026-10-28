@@ -1,15 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotesStore, MAX_FILE_BYTES } from '../lib/notes-store.js';
-import {
-  notes_list_files_by_prefix,
-  notes_read_file,
-  notes_search_contents,
-  notes_append_to_file,
-  notes_write_file,
-  NOTES_TOOLS,
-  readNotes,
-} from '../lib/tools/notes.js';
+import { notes_read, notes_write, NOTES_TOOLS, readNotes } from '../lib/tools/notes.js';
 
 describe('NotesStore — Write and Read Operations', () => {
   it('writes and reads a note file with default relative path', () => {
@@ -371,28 +363,15 @@ describe('NotesStore — Substring Search', () => {
 });
 
 describe('Notes Tools & Registration', () => {
-  it('exports all 5 notes tool action definitions', () => {
-    const tools = [
-      notes_list_files_by_prefix,
-      notes_read_file,
-      notes_search_contents,
-      notes_append_to_file,
-      notes_write_file,
-    ];
-
-    for (const tool of tools) {
-      assert.ok(typeof tool.name === 'string');
-      assert.ok(typeof tool.description === 'string');
+  it('exports only two notes tools with an explicit write mode', () => {
+    assert.deepEqual(Object.keys(NOTES_TOOLS), ['notes_read', 'notes_write']);
+    for (const tool of Object.values(NOTES_TOOLS)) {
       assert.equal(tool.parameters.type, 'object');
-      assert.ok(tool.parameters.properties);
+      assert.equal(tool.parameters.additionalProperties, false);
       assert.equal(typeof tool.output.render, 'function');
     }
-
-    assert.equal(NOTES_TOOLS.notes_write_file.name, 'notes_write_file');
-    assert.deepEqual(notes_write_file.parameters.required, ['path', 'text']);
-    assert.deepEqual(notes_append_to_file.parameters.required, ['path', 'text']);
-    assert.deepEqual(notes_read_file.parameters.required, ['path']);
-    assert.deepEqual(notes_search_contents.parameters.required, ['query']);
+    assert.deepEqual(notes_write.parameters.required, ['path', 'text', 'mode']);
+    assert.equal(notes_read.parameters.properties.agent_name, undefined);
   });
 
   it('serves bounded reads, search and listing from the session namespace', () => {
@@ -401,21 +380,21 @@ describe('Notes Tools & Registration', () => {
     assert.equal(store.appendToFile('self', 'summary.md', '\nLine D').status, 'appended');
 
     // Read with line slice, then character paging inside the slice.
-    const readRes = readNotes(store, 'notes_read_file', { path: 'summary.md', start_line: 2, stop_line: 3 });
+    const readRes = readNotes(store, { path: 'summary.md', start_line: 2, stop_line: 3 });
     assert.equal(readRes.content, 'Line B\nLine C');
     assert.equal(readRes.has_more, false);
-    const paged = readNotes(store, 'notes_read_file', { path: 'summary.md', offset_chars: 2, limit_chars: 4 });
+    const paged = readNotes(store, { path: 'summary.md', offset_chars: 2, limit_chars: 4 });
     assert.deepEqual([paged.content, paged.next_offset_chars, paged.total_chars], ['ne A', 6, 27]);
 
     // Search
-    const searchRes = readNotes(store, 'notes_search_contents', { query: 'Line B' });
-    assert.equal(searchRes.length, 1);
-    assert.equal(searchRes[0].matches[0].line_number, 2);
-    assert.equal(searchRes[0].matches[0].truncated, false);
+    const searchRes = readNotes(store, { query: 'Line B' });
+    assert.equal(searchRes.matches.length, 1);
+    assert.equal(searchRes.matches[0].matches[0].line_number, 2);
+    assert.equal(searchRes.matches[0].matches[0].truncated, false);
 
     // List by prefix
-    const listRes = readNotes(store, 'notes_list_files_by_prefix', { prefix: '' });
-    assert.equal(listRes.length, 1);
-    assert.equal(listRes[0].path, 'self/notes/summary.md');
+    const listRes = readNotes(store, { prefix: '' });
+    assert.equal(listRes.files.length, 1);
+    assert.equal(listRes.files[0].path, 'self/notes/summary.md');
   });
 });

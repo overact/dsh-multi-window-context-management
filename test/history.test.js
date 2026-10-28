@@ -8,16 +8,16 @@ test('history is isolated by live session, including explicit agent-name overrid
   const f = await fixture(); t.after(f.dispose);
   const a = await f.agent('a'), b = await f.agent('b');
   user(a.session, 'A private task'); user(b.session, 'B private task');
-  await f.execute(a, 'notes_write_file', { path: 'progress.md', text: 'A state' });
-  await f.execute(b, 'notes_write_file', { path: 'progress.md', text: 'B state' });
-  const items = await f.execute(a, 'history_list_items');
+  await f.execute(a, 'notes_write', { mode: 'replace', path: 'progress.md', text: 'A state' });
+  await f.execute(b, 'notes_write', { mode: 'replace', path: 'progress.md', text: 'B state' });
+  const items = await f.execute(a, 'history_search');
   assert.equal(items.isError, false);
   assert.equal(items.value.items.length, 1);
   assert.match(items.value.items[0].truncated_content, /A private/);
-  assert.equal((await f.execute(a, 'history_list_items', { agent_name: 'b' })).isError, true);
-  assert.equal((await f.execute(a, 'notes_read_file', { path: '/b/notes/progress.md' })).isError, true);
-  assert.equal((await f.execute(a, 'notes_write_file', { path: '/b/notes/progress.md', text: 'overwrite' })).isError, true);
-  assert.equal((await f.execute(b, 'notes_read_file', { path: 'progress.md' })).value.content, 'B state');
+  assert.equal((await f.execute(a, 'history_search', { agent_name: 'b' })).isError, true);
+  assert.equal((await f.execute(a, 'notes_read', { path: '/b/notes/progress.md' })).isError, true);
+  assert.equal((await f.execute(a, 'notes_write', { mode: 'replace', path: '/b/notes/progress.md', text: 'overwrite' })).isError, true);
+  assert.equal((await f.execute(b, 'notes_read', { path: 'progress.md' })).value.content, 'B state');
 });
 
 test('event IDs remain stable through repeated rotations; older history is not evicted', async t => {
@@ -44,7 +44,7 @@ test('window, goal and checklist IDs advertised in a handoff stay readable', asy
   assert.ok(await f.native.compactNow(a, new AbortController().signal));
   const h = new HistoryStore(s, f.plugin.states);
   // Every handoff prints these IDs; reading one must not come back null.
-  const window = h.listWindows({ recent_first: false })[0];
+  const window = h.listWindows({ recent_first: false }).windows[0];
   const summary = h.readItem({ item_id: window.summary_item_id });
   assert.ok(summary, `${window.summary_item_id} must be readable`);
   assert.equal(summary.event_type, 'compaction/summary');
@@ -107,4 +107,45 @@ test('unchanged session projection performs zero repeat event reads', () => {
   s.eventAt = seq => { reads++; return eventAt(seq); };
   states.get(s); assert.equal(reads, 0);
   user(s, 'tail'); states.get(s); assert.equal(reads, 1);
+});
+
+test('merged history tools browse, search and read through the real tool runtime', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const a = await f.agent();
+  const first = user(a.session, 'FIRST precise evidence');
+  user(a.session, 'SECOND precise evidence');
+  const listed = await f.execute(a, 'history_search', { limit: 1, recent_first: false });
+  assert.equal(listed.isError, false);
+  assert.equal(listed.value.items[0].item_id, `item_${first.seq}`);
+  const next = await f.execute(a, 'history_search', { limit: 1, recent_first: false, cursor: listed.value.next_cursor });
+  assert.match(next.value.items[0].truncated_content, /SECOND/);
+  const found = await f.execute(a, 'history_search', { query: 'first', case_sensitive: false });
+  assert.equal(found.value.matches.length, 1);
+  const read = await f.execute(a, 'history_read', { item_id: found.value.matches[0].item_id, limit_chars: 5 });
+  assert.equal(read.value.content, 'FIRST');
+  const tail = await f.execute(a, 'history_read', { item_id: found.value.matches[0].item_id, offset_chars: read.value.next_offset_chars });
+  assert.equal(read.value.content + tail.value.content, 'FIRST precise evidence');
+  assert.equal((await f.execute(a, 'history_search', { scope: 'windows', query: 'ignored?' })).isError, true);
+});
+
+test('window directory pages past 20 windows in both directions without skipping old windows', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const a = await f.agent();
+  const state = f.plugin.states.get(a.session);
+  state.windows = Array.from({ length: 55 }, (_, i) => ({ window_id: `win_${i + 1}`, start_seq: i, created_at: 0, item_count: 0 }));
+  for (const recent_first of [true, false]) {
+    const ids = []; let cursor;
+    do {
+      const result = await f.execute(a, 'history_search', { scope: 'windows', recent_first, ...(cursor === undefined ? {} : { cursor }) });
+      assert.equal(result.isError, false);
+      assert.ok(result.value.windows.length <= 20);
+      ids.push(...result.value.windows.map(w => w.window_id));
+      cursor = result.value.next_cursor;
+    } while (cursor !== null);
+    assert.deepEqual(ids, (recent_first ? [...state.windows].reverse() : state.windows).map(w => w.window_id));
+  }
+  const initial = await f.execute(a, 'history_search', { scope: 'windows', limit: 1 });
+  state.windows.push({ window_id: 'win_56', start_seq: 55, created_at: 0, item_count: 0 });
+  const continued = await f.execute(a, 'history_search', { scope: 'windows', limit: 1, cursor: initial.value.next_cursor });
+  assert.equal(continued.value.windows[0].window_id, 'win_54');
 });

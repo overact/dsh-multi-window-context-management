@@ -90,9 +90,9 @@ test('the full summary reaches the model, and the window message stays within it
   assert.match(message, /Session checklist \[item_\d+\]/);
   assert.match(message, /^Note self\/notes\//m);
   // The ID the window message advertises must resolve through the real tool surface.
-  const read = await f.execute(agent, 'history_read_item', { item_id: `item_${event.seq}` });
+  const read = await f.execute(agent, 'history_read', { item_id: `item_${event.seq}` });
   assert.equal(read.isError, false);
   assert.match(read.value.content, /^## Primary Request and Intent/);
   const history = new HistoryStore(s, f.plugin.states);
-  assert.equal(history.listWindows({ recent_first: false })[0].summary_item_id, `item_${event.seq}`);
+  assert.equal(history.listWindows({ recent_first: false }).windows[0].summary_item_id, `item_${event.seq}`);
 });

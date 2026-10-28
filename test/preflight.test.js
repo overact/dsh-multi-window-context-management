@@ -46,7 +46,7 @@ const failures = ({ results }) => results.filter(r => !r.ok && r.level === 'fail
 test('requirements are derived from the plugin sources', () => {
   const req = requirements();
   assert.deepEqual(req.commands, ['ctx']);
-  assert.equal(req.tools.length, 10);
+  assert.equal(req.tools.length, 5);
   assert.ok(req.services.tools.includes('register'));
   assert.ok(req.events.includes('agent/pre-step'));
   assert.ok(req.imports['@deepseek-ai/dsh-llm'].includes('createUserMessage'));

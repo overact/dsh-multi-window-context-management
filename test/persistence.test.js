@@ -15,8 +15,8 @@ test('real JSONL storage restores notes, windows and exact history through a fre
   try {
     const a = await f.agent('disk-session');
     user(a.session, 'Exact original output 中文\n' + 'x'.repeat(40_000)); user(a.session, 'Continue with YAML.');
-    assert.equal((await f.execute(a, 'notes_write_file', { path: 'progress.md', text: '已完成实现\n' })).isError, false);
-    assert.equal((await f.execute(a, 'notes_append_to_file', { path: 'progress.md', text: '待验证恢复。' })).isError, false);
+    assert.equal((await f.execute(a, 'notes_write', { mode: 'replace', path: 'progress.md', text: '已完成实现\n' })).isError, false);
+    assert.equal((await f.execute(a, 'notes_write', { mode: 'append', path: 'progress.md', text: '待验证恢复。' })).isError, false);
     // Notes are plugin-owned Harness-home data, not files inside the persistence backend's layout.
     assert.ok(existsSync(join(root, 'context-management', 'notes', 'disk-session.json')));
     assert.ok(!readdirSync(root, { recursive: true }).some(p => String(p).endsWith('context-management-notes.json')));
@@ -48,7 +48,7 @@ test('failed durability is reported rather than acknowledging a saved note', asy
   const f = await fixture(); t.after(f.dispose);
   const a = await f.agent();
   f.ctx.on('session/flush', () => { throw new Error('disk unavailable'); });
-  const write = await f.execute(a, 'notes_write_file', { path: 'progress.md', text: 'state' });
+  const write = await f.execute(a, 'notes_write', { mode: 'replace', path: 'progress.md', text: 'state' });
   assert.equal(write.isError, true);
   assert.match(JSON.stringify(write), /disk unavailable/);
   assert.equal(f.plugin.states.get(a.session).windows.length, 1);
@@ -67,4 +67,21 @@ test('concurrent note writers serialize without lost appends', async t => {
   ]);
   const restored = new NoteRepository(f.notesRoot).load(a.session).readFile('self', 'progress.md').content;
   assert.match(restored, /LEFT/); assert.match(restored, /RIGHT/);
+});
+
+test('merged note writes preserve saved content and cache on cancellation or repository failure', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const a = await f.agent();
+  await f.execute(a, 'notes_write', { path: 'state.md', text: 'saved', mode: 'replace' });
+  const abort = new AbortController(); abort.abort(new Error('cancelled'));
+  const cancelled = await f.ctx.tools.execute({ agent: a, name: 'notes_write', arguments: { path: 'state.md', text: 'lost', mode: 'replace' }, callId: 'cancelled-write', signal: abort.signal });
+  assert.equal(cancelled.isError, true);
+  const state = f.plugin.states.get(a.session);
+  const cached = state.notes;
+  f.plugin.states.repository.write = async () => { throw new Error('atomic write failed'); };
+  const failed = await f.execute(a, 'notes_write', { path: 'state.md', text: 'lost', mode: 'replace' });
+  assert.equal(failed.isError, true);
+  assert.equal(state.notes, cached);
+  assert.equal(state.notes.readFile('self', 'state.md').content, 'saved');
+  assert.equal(new NoteRepository(f.notesRoot).load(a.session).readFile('self', 'state.md').content, 'saved');
 });

@@ -6,7 +6,7 @@ Windowed context handoffs, session-private notes and paged history recall for [D
 
 ## Compatibility
 
-Version **0.4.0**, verified on **DSH 0.2.1-rc.2 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
+Version **0.5.0**, verified on **DSH 0.2.1-rc.3 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
 
 - **Compaction stays native in every preset.** The plugin never replaces, subclasses or patches DSH's compaction engine, and touches no preset. DSH upgrades need no extra step, and presets you create yourself are covered automatically.
 - After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions, recent notes and the window index. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
@@ -38,8 +38,14 @@ A session cannot append while it is publishing an event, so the window message f
 | Tool | Purpose |
 | --- | --- |
 | `new_context` | Request a window switch at the next safe step boundary |
-| `notes_write_file` / `notes_append_to_file` / `notes_read_file` / `notes_list_files_by_prefix` / `notes_search_contents` | Session-private notes that survive window switches and restarts |
-| `history_list_windows` / `history_list_items` / `history_read_item` / `history_search_contents` | Paged recall over the session's complete raw history. `history_read_item` also resolves the summary, goal and checklist item IDs that every window message prints |
+| `notes_read` | Read by `path`; search with `query`; omit both to list files. `prefix` filters listing/search |
+| `notes_write` | Persist a note with required `mode: "replace"` or `"append"` |
+| `history_search` | Browse messages, optionally search with `query`; use `scope: "windows"` for the paged window directory |
+| `history_read` | Read an item by ID, including the summary, goal and checklist IDs printed in window messages |
+
+All tools are scoped to the calling session; no session selector is exposed. Reads and writes stay separate. Note listing/search uses newest-updated order; sorting aliases are no longer exposed. `notes_read` returns `files` for listing, `matches` for search, or a paginated body for a path. Path reads cannot be combined with search/list options. History discovery returns `items`, `matches` or `windows`, plus `has_more` / `next_cursor`.
+
+Examples: `notes_write({path: "progress.md", text: "Tests passed", mode: "replace"})`, `notes_read({query: "Tests"})`, `history_search({scope: "windows", limit: 10})`, `history_read({item_id: "item_42"})`.
 
 ## Usage
 
@@ -47,7 +53,7 @@ A session cannot append while it is publishing an event, so the window message f
 
 When the model calls `new_context` it gets back **requested**, not a reset: the switch is scheduled for the next safe step boundary, after the current step's tool results are fully written to history. Explicit switch requests are honoured even when DSH's `auto` compaction is off. A preset with no compaction engine refuses `new_context` with a clear error, while the notes/history tools stay usable.
 
-The web "Context management" settings page uses DSH `configForms` and shares its backend setting with `/ctx`. Read failures, read-only connections and failed saves are never shown as a successful toggle. Settings changes need no restart. Every registration goes through the Cordis lifecycle, so a hot swap (dispose + re-apply) removes all ten tools, the `/ctx` command, the prompt section, both listeners and the `contextWindows` service (session state and settings, read by other plugins such as dsh-autocompact), then re-installs exactly one of each while notes are rebuilt from their durable store. DSH's `hmr` entry watches only its configured `root` directories, so add this plugin's `lib` there to reload on source edits; otherwise **reload the plugin or restart DSH, then refresh the page** after upgrading the plugin code.
+The web "Context management" settings page uses DSH `configForms` and shares its backend setting with `/ctx`. Read failures, read-only connections and failed saves are never shown as a successful toggle. Settings changes need no restart. Every registration goes through the Cordis lifecycle, so a hot swap (dispose + re-apply) removes all five tools, the `/ctx` command, the prompt section, both listeners and the `contextWindows` service (session state and settings, read by other plugins such as dsh-autocompact), then re-installs exactly one of each while notes are rebuilt from their durable store. DSH's `hmr` entry watches only its configured `root` directories, so add this plugin's `lib` there to reload on source edits; otherwise **reload the plugin or restart DSH, then refresh the page** after upgrading the plugin code.
 
 ## Storage and recovery
 
@@ -55,12 +61,12 @@ History is read straight from the caller's own immutable DSH session log:
 
 - `item_<seq>` is a stable event address; nothing is indexed twice and old records are not dropped past 2,000 entries.
 - Native tool results are linked to their names by call ID; `tool/code-dispatch` (PTC) is searchable too.
-- `history_read_item` with `format: "json"` pages through complete raw events, including call arguments and metadata.
+- `history_read` with `format: "json"` pages through complete raw events, including call arguments and metadata.
 - Windows are delimited by the plugin's window messages, each tied to its compaction by a `<window_record>`. Old events kept in the retained tail still belong to the window that produced them. Sessions written by 0.3.x, whose handoff lived inside the summary, are still read.
 
 Notes are isolated per session under `self/notes/<path>`; **there is no arbitrary cross-session read/write**. They live in the plugin's own directory, `$DSH_HOME/context-management/notes/<sessionId>.json` (`$DSH_HOME` resolved by `dsh-home-paths`), independent of the session-persistence backend's private layout, and are written with DSH's atomic write and cross-process file lock. A failed write never swaps unsaved state into the cache.
 
-After every committed window switch (automatic, `/compact` or `new_context`) the plugin writes two notes itself: `handoff.md` is replaced with the latest full summary (the summarizer's raw output), and `handoff-log.md` gains one line with the window, time, summary item and first line. Only the latest summary is kept in full, because each one already merges the previous one; earlier ones stay readable through `history_read_item`. Neither note is injected into the window message, because the summary is already in the conversation. A cancelled or failed compaction writes nothing, and a failed note write is logged without blocking the switch.
+After every committed window switch (automatic, `/compact` or `new_context`) the plugin writes two notes itself: `handoff.md` is replaced with the latest summary copy (raw output, capped at 200,000 characters with a truncation marker), and `handoff-log.md` gains one line with the window, time, summary item and first line. Only the latest summary copy is kept; complete original events, including raw output, remain available through `history_read` with `format: "json"`. Neither note is injected into the window message, because the summary is already in the conversation. A cancelled or failed compaction writes nothing, and a failed note write is logged without blocking the switch. Writes are queued per session and tied to the committed window, so slow writes do not skip intermediate rotations or block other sessions.
 
 Notes load on demand, not for every session at startup. On restore, window metadata is rebuilt and that session's notes are loaded; an unfinished transient switch request is not re-executed after a restart.
 
@@ -80,7 +86,7 @@ Include `context-management/notes/` when backing up or migrating; **deleting a s
 | History / note body reads | 8,000 characters by default, 20,000 max |
 | Note search | Up to 10 files × 5 lines; 400 characters per line |
 
-History queries return `has_more` and `next_cursor`; keep the same filters and order when continuing. Body reads continue with `next_offset_chars`. Search is case-sensitive unless `case_sensitive: false`.
+History queries return `has_more` and `next_cursor`; keep the same filters and order when continuing. Body reads continue with `next_offset_chars`. Note search is case-sensitive; history search also supports `case_sensitive: false`. Window directory pages use the same cursor convention (default 20, max 50 windows).
 
 The last four user instructions are quoted in chronological order, up to 1,000 characters each, with their event addresses, later corrections taking precedence. The window message also keeps the active goal, open todos and a bounded set of recent notes; exact raw evidence is recovered through the history tools.
 
@@ -110,6 +116,10 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 4. Register the plugin in the profile's `cordis.patch.yml` (see Configuration below).
 
 5. Restart DSH and refresh the page.
+
+### Upgrading from 0.4.x
+
+0.5.0 replaces the ten-tool interface with the five tools above. Old tool names are no longer registered; update external prompts or scripts that invoke them. Writes must select `mode`; listing/search aliases and `agent_name` inputs are removed. Existing notes, session logs and item IDs need no migration. Reload the plugin and refresh the client to use the new definitions; historical messages may still quote the old names.
 
 ### Upgrading from 0.3.x
 
@@ -171,7 +181,7 @@ Coverage includes the real Cordis lifecycle, DSH ToolRuntime, SettingsProvider, 
 
 History reads are incremental: building state for 10,000 synthetic events takes ~2.5 ms the first time, and an unchanged re-read scans **0 events** (timings are indicative only; the regression tests pin incremental reads, scan limits and output limits).
 
-0.4.0 passes 72 tests on DSH 0.2.1-rc.2, including the preflight: a stand-in DSH missing one seam must make it report exactly that capability.
+0.5.0 passes 79 tests on DSH 0.2.1-rc.3, including the preflight: a stand-in DSH missing one seam must make it report exactly that capability.
 
 ## Code layout
 

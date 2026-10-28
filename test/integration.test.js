@@ -27,7 +27,7 @@ test('real DSH manual transaction shrinks context, preserves corrections/notes a
   const agent = await f.agent(); const session = agent.session;
   const first = user(session, 'Implement CSV support.\n' + 'diagnostic data '.repeat(6000));
   user(session, 'Cancel CSV; implement YAML only.');
-  const write = await f.execute(agent, 'notes_write_file', { path: 'progress.md', text: 'YAML parser is implemented; next run validation.' });
+  const write = await f.execute(agent, 'notes_write', { mode: 'replace', path: 'progress.md', text: 'YAML parser is implemented; next run validation.' });
   assert.equal(write.isError, false);
   const before = f.ctx.tokenMeter.measure(session).totalTokens;
   const rotation = await f.native.compactNow(agent, signal());
@@ -195,11 +195,11 @@ test('explicit requests still work when DSH auto compaction is disabled', async 
 test('note read and search outputs remain bounded even for a one-megabyte line', async t => {
   const f = await fixture(); t.after(f.dispose);
   const agent = await f.agent();
-  assert.equal((await f.execute(agent, 'notes_write_file', { path: 'large', text: 'x'.repeat(1_000_000) })).isError, false);
-  const read = await f.execute(agent, 'notes_read_file', { path: 'large' });
+  assert.equal((await f.execute(agent, 'notes_write', { mode: 'replace', path: 'large', text: 'x'.repeat(1_000_000) })).isError, false);
+  const read = await f.execute(agent, 'notes_read', { path: 'large' });
   assert.equal(read.isError, false); assert.equal(read.value.content.length, 8000);
   assert.equal(read.value.next_offset_chars, 8000);
-  const search = await f.execute(agent, 'notes_search_contents', { query: 'x' });
+  const search = await f.execute(agent, 'notes_read', { query: 'x' });
   assert.equal(search.isError, false); assert.ok(JSON.stringify(search.value).length < 1500);
 });
 
@@ -237,4 +237,62 @@ test('handoff notes are not written while context management is disabled or for 
   await assert.rejects(async () => f.native.compactNow(agent, abort.signal), /cancelled/);
   await f.plugin.handoffWrites;
   assert.equal(f.plugin.states.get(s).notes.files.has('self/notes/handoff.md'), false);
+});
+
+test('queued handoff writes retain every committed window even when later rotations overtake IO', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const agent = await f.agent(); const s = agent.session;
+  const states = f.plugin.states;
+  const writeNote = states.writeNote.bind(states);
+  let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  let held = false;
+  states.writeNote = async (...args) => {
+    if (args[1] === 'handoff.md' && !held) {
+      held = true; entered(); await blocked;
+    }
+    return writeNote(...args);
+  };
+  t.after(async () => { release(); await f.plugin.handoffWrites; });
+  try {
+    for (let i = 1; i <= 3; i++) {
+      f.native.summarizer = async () => {
+        const summary = [{ type: 'text', text: `Summary number ${i}.` }];
+        return { summary, rawOutput: summary, provider: 'fixture', model: 'fixture' };
+      };
+      user(s, `Work ${i}: ` + 'noise '.repeat(8000)); user(s, `Tail ${i}`);
+      assert.ok(await f.native.compactNow(agent, signal()));
+      if (i === 1) await started;
+    }
+  } finally { release(); await f.plugin.handoffWrites; }
+  const notes = states.get(s).notes;
+  const log = notes.readFile('self', 'handoff-log.md').content.trim().split('\n');
+  assert.deepEqual(log.map(line => line.split(' ')[1]), ['win_002', 'win_003', 'win_004']);
+  for (let i = 0; i < 3; i++) assert.match(log[i], new RegExp(`Summary number ${i + 1}`));
+  assert.match(notes.readFile('self', 'handoff.md').content, /win_003 → win_004[\s\S]*Summary number 3/);
+});
+
+test('a slow handoff note in one session does not block another session', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const a = await f.agent('slow'), b = await f.agent('independent');
+  const states = f.plugin.states;
+  const writeNote = states.writeNote.bind(states);
+  let release, entered;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  states.writeNote = async (...args) => {
+    if (args[0] === a.session && args[1] === 'handoff.md') { entered(); await blocked; }
+    return writeNote(...args);
+  };
+  try {
+    for (const agent of [a, b]) {
+      user(agent.session, 'noise '.repeat(8000)); user(agent.session, 'tail');
+      assert.ok(await f.native.compactNow(agent, signal()));
+      if (agent === a) await started;
+    }
+    await f.plugin.windows.sessionHandoffWrites.get(b.session);
+    assert.match(states.get(b.session).notes.readFile('self', 'handoff.md').content, /win_001 → win_002/);
+    assert.equal(states.get(a.session).notes.files.has('self/notes/handoff.md'), false);
+  } finally { release(); await f.plugin.handoffWrites; }
 });
