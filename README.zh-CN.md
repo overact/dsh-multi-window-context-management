@@ -6,7 +6,7 @@
 
 ## 当前适配
 
-版本 **0.6.0**，已针对 **DSH 0.2.2-rc.1 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
+版本 **0.6.1**，已针对 **DSH 0.2.2-rc.1 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
 
 - **每个 preset 的压缩都保持原生。** 插件不替换、不继承、也不修补 DSH 的压缩引擎，不碰任何 preset。升级 DSH 不需要额外步骤，你自己新建的 preset 也自动生效。
 - 每次 DSH 提交一次压缩后，插件追加一条**窗口消息**：目标、待办、最近几条用户指令和近期笔记，由它开启下一个窗口。摘要本身就是 DSH 自己的 checkpoint，不改动、不截断，并保留真实的 provider/model/usage。
@@ -43,7 +43,7 @@ flowchart TD
 | `history_search` | 浏览消息，可用 `query` 搜索；`scope: "windows"` 分页列出窗口目录 |
 | `history_read` | 按 ID 读原文，也支持窗口消息标明的摘要、目标和清单 ID |
 
-`notes_read`、`notes_write`、`history_search`、`history_read` 只在会话首次换窗后才提供（`lazyTools` 默认开启）：从未换窗的会话只付 `new_context` 的 schema 开销。所有工具限定在调用者的会话内，不暴露会话选择参数。读写分开；笔记目录和搜索固定按最近更新时间排序，不再暴露排序别名。`notes_read` 列目录返回 `files`，搜索返回 `matches`，按路径读取返回分页正文。按路径读取不能混用搜索或目录选项。历史发现返回 `items`、`matches` 或 `windows`，附带 `has_more` / `next_cursor`。
+设置页、插件列表条目、`/ctx` 命令文案、系统提示段和换窗交接都跟随 DSH 语言：插件内置英文和中文，其他语言偏好回退到英文。`notes_read`、`notes_write`、`history_search`、`history_read` 只在会话首次换窗后才提供（`lazyTools` 默认开启）：从未换窗的会话只付 `new_context` 的 schema 开销。所有工具限定在调用者的会话内，不暴露会话选择参数。读写分开；笔记目录和搜索固定按最近更新时间排序，不再暴露排序别名。`notes_read` 列目录返回 `files`，搜索返回 `matches`，按路径读取返回分页正文。按路径读取不能混用搜索或目录选项。历史发现返回 `items`、`matches` 或 `windows`，附带 `has_more` / `next_cursor`。
 
 示例：`notes_write({path: "progress.md", text: "测试通过", mode: "replace"})`、`notes_read({query: "测试"})`、`history_search({scope: "windows", limit: 10})`、`history_read({item_id: "item_42"})`。
 

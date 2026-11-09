@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- **The plugin follows the DSH language.** Config descriptions, the `/ctx` command text, the system prompt section, the window handoff and the handoff note are now resolved from the host `locale` preference: English and Chinese ship with the plugin, and any other preference falls back to English. The `/ctx` command is re-registered when the language changes.
+- **The settings section is editable again.** Its checkboxes checked a `mode` field that the DSH 0.2.2 config form no longer carries, so every control was disabled with "Host settings are unavailable"; the form now follows the form's `writable` flag.
+- `npm run verify`: 84/84 on DSH 0.2.2-rc.1.
+
 ## 0.6.0
 
 - **Notes and history tools appear only after the session's first window rotation.** `lazyTools` (default on) gates `notes_read`, `notes_write`, `history_search` and `history_read` per session through the tool registry's step condition; a session that never rotates carries only `new_context`'s schema (~290 characters instead of ~2,900). Set `lazyTools: false` for the old always-on surface.
