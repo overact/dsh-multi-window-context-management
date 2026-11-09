@@ -74,8 +74,9 @@ test('merged note writes preserve saved content and cache on cancellation or rep
   const a = await f.agent();
   await f.execute(a, 'notes_write', { path: 'state.md', text: 'saved', mode: 'replace' });
   const abort = new AbortController(); abort.abort(new Error('cancelled'));
-  const cancelled = await f.ctx.tools.execute({ agent: a, name: 'notes_write', arguments: { path: 'state.md', text: 'lost', mode: 'replace' }, callId: 'cancelled-write', signal: abort.signal });
-  assert.equal(cancelled.isError, true);
+  const cancelled = await f.ctx.tools.execute({ agent: a, signal: abort.signal,
+    calls: [{ id: 'cancelled-write', name: 'notes_write', arguments: JSON.stringify({ path: 'state.md', text: 'lost', mode: 'replace' }) }] });
+  assert.equal(cancelled.results[0].result.isError, true);
   const state = f.plugin.states.get(a.session);
   const cached = state.notes;
   f.plugin.states.repository.write = async () => { throw new Error('atomic write failed'); };

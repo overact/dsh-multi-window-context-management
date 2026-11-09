@@ -21,7 +21,7 @@ test('the window message is bounded and side-effect free', () => {
     const message = new WindowEngine(states).prepare(s, budget, summaryEvent('s'.repeat(50_000)));
     assert.ok(message.header.length <= budget, `${message.header.length} > ${budget}`);
     assert.ok(message.record.summary.length <= 1000);
-    const recent = message.header.split('Recent user instructions (chronological):\n')[1]?.split('\nWindow directory:')[0] ?? '';
+    const recent = message.header.split('Recent user instructions (chronological):\n')[1]?.split('\nGoal/todo are durable')[0] ?? '';
     assert.match(recent, /User 7/); assert.doesNotMatch(recent, /User 0/);
     assert.equal(states.get(s).windows.length, 1); assert.equal(s.seq, seq);
   }
@@ -34,10 +34,8 @@ test('the window message names its summary and carries the session snapshot', ()
   const { header, record } = new WindowEngine(states).prepare(s, 16000, summaryEvent('## Primary Request\n' + 'g'.repeat(5_000)));
   assert.deepEqual({ ...record, summary: undefined }, { version: 3, window_id: 'win_001', compaction_id: 'c-1', through_seq: 2, summary_kind: 'generated', summary: undefined });
   assert.match(header, /^<context_window id="win_002" previous_window_id="win_001">\n<window_record>/);
-  assert.match(header, /\(item_99, written by p\/m\)/);
+  assert.match(header, /\(item_99, p\/m\)/);
   assert.doesNotMatch(header, /g{2000}/, 'the summary itself stays in the native checkpoint');
-  // Directory previews skip the summary's headings.
-  assert.match(header, /\nwin_001 \(start item_0, summary item_99\): g{20}/);
   assert.match(header, /Finish YAML/);
   // Recent instructions are quoted up to 1,000 characters each, not a 200-character topic.
   assert.match(header, /\[item_\d+\] User 3: u{970}/);

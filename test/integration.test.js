@@ -113,7 +113,7 @@ test('the native summary stays untouched and the window message opens the next w
   assert.equal(message.data.source.kind, 'plugin:context-management');
   const text = message.data.content[0].text;
   assert.match(text, /^<context_window id="win_002" previous_window_id="win_001">/);
-  assert.match(text, new RegExp(`item_${summary.seq}, written by fixture/fixture`));
+  assert.match(text, new RegExp(`item_${summary.seq}, fixture/fixture`));
   assert.match(text, /Recent user instructions/);
   await f.plugin.handoffWrites;
   const restored = Session.create(s.id, f.persisted.get(s.id));

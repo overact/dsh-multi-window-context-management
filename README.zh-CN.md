@@ -6,10 +6,10 @@
 
 ## 当前适配
 
-版本 **0.5.0**，已针对 **DSH 0.2.1-rc.3 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
+版本 **0.6.0**，已针对 **DSH 0.2.2-rc.1 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
 
 - **每个 preset 的压缩都保持原生。** 插件不替换、不继承、也不修补 DSH 的压缩引擎，不碰任何 preset。升级 DSH 不需要额外步骤，你自己新建的 preset 也自动生效。
-- 每次 DSH 提交一次压缩后，插件追加一条**窗口消息**：目标、待办、最近几条用户指令、近期笔记和窗口目录，由它开启下一个窗口。摘要本身就是 DSH 自己的 checkpoint，不改动、不截断，并保留真实的 provider/model/usage。
+- 每次 DSH 提交一次压缩后，插件追加一条**窗口消息**：目标、待办、最近几条用户指令和近期笔记，由它开启下一个窗口。摘要本身就是 DSH 自己的 checkpoint，不改动、不截断，并保留真实的 provider/model/usage。
 - `new_context` 通过 `agentPresets.serviceFor(agent, 'compaction')` 找到调用者所在 preset 的引擎，请它强制压缩一次。原生的工具调用配对、近期保留、维护锁、取消、缩减检查、事务、落盘和 overflow 重试全部照常生效。
 - 只有 DSH 真正提交替换，窗口编号才推进。失败、取消和无可压缩历史不会假报换窗成功。
 - 卸载或停用插件后，压缩与 DSH 出厂行为完全一致。
@@ -25,7 +25,7 @@ flowchart TD
   O["服务商报告上下文溢出"] --> N
   F --> N["DSH 原生压缩：<br/>一次摘要调用，checkpoint 替换较早的消息"]
   D -- 超过阈值 --> N
-  N --> W["compaction/end → 插件追加窗口消息<br/>goal/todo + 最近 4 条用户指令原文 + 笔记 + 窗口目录"]
+  N --> W["compaction/end → 插件追加窗口消息<br/>goal/todo + 最近 4 条用户指令原文 + 笔记"]
   W --> E["进入窗口 win_N+1<br/>系统提示词与工具不变"]
   W --> H["替换 handoff.md<br/>追加 handoff-log.md"]
   E --> R["模型按需用 history_* / notes_*<br/>找回具体细节"]
@@ -43,7 +43,7 @@ flowchart TD
 | `history_search` | 浏览消息，可用 `query` 搜索；`scope: "windows"` 分页列出窗口目录 |
 | `history_read` | 按 ID 读原文，也支持窗口消息标明的摘要、目标和清单 ID |
 
-所有工具限定在调用者的会话内，不暴露会话选择参数。读写分开；笔记目录和搜索固定按最近更新时间排序，不再暴露排序别名。`notes_read` 列目录返回 `files`，搜索返回 `matches`，按路径读取返回分页正文。按路径读取不能混用搜索或目录选项。历史发现返回 `items`、`matches` 或 `windows`，附带 `has_more` / `next_cursor`。
+`notes_read`、`notes_write`、`history_search`、`history_read` 只在会话首次换窗后才提供（`lazyTools` 默认开启）：从未换窗的会话只付 `new_context` 的 schema 开销。所有工具限定在调用者的会话内，不暴露会话选择参数。读写分开；笔记目录和搜索固定按最近更新时间排序，不再暴露排序别名。`notes_read` 列目录返回 `files`，搜索返回 `matches`，按路径读取返回分页正文。按路径读取不能混用搜索或目录选项。历史发现返回 `items`、`matches` 或 `windows`，附带 `has_more` / `next_cursor`。
 
 示例：`notes_write({path: "progress.md", text: "测试通过", mode: "replace"})`、`notes_read({query: "测试"})`、`history_search({scope: "windows", limit: 10})`、`history_read({item_id: "item_42"})`。
 
@@ -76,8 +76,8 @@ flowchart TD
 
 | 操作 | 默认值 / 硬上限 |
 | --- | --- |
-| 窗口消息（`handoffMaxChars`） | 默认 8,000 字符，可设置 4,000–32,000；原生摘要另计，长度由 DSH 自己的 `maxTokens` 决定 |
-| 注入笔记 | 最近最多 8 个，每个最多约 1,200 字符，仍受窗口消息总预算限制 |
+| 窗口消息（`handoffMaxChars`） | 默认 6,000 字符，可设置 4,000–32,000；原生摘要另计，长度由 DSH 自己的 `maxTokens` 决定 |
+| 注入笔记 | 最近最多 4 个，每个最多约 800 字符，仍受窗口消息总预算限制 |
 | 单文件笔记 | 1,000,000 UTF-8 字节 |
 | 每会话笔记总量 | 64 个文件 / 4,000,000 UTF-8 字节；超限明确拒绝，不静默淘汰 |
 | 历史列表 / 搜索 | 默认 20 条，最多 50 条；每条默认 400 字符，最多 1,000 |
@@ -152,9 +152,10 @@ flowchart TD
         enabled: true
         overrideCompaction: true
         injectTools: true
+        lazyTools: true              # 首次换窗后才提供 notes/history
         defaultStrategy: window      # 或 native：未在 modelPolicies 中列出的模型不追加窗口消息
         modelPolicies: []            # 例：[{ provider: deepseek, model: deepseek-chat, strategy: native }]
-        handoffMaxChars: 8000        # 4000–32000
+        handoffMaxChars: 6000        # 4000–32000
 ```
 
 | 键 | 默认值 | 含义 |
@@ -164,7 +165,7 @@ flowchart TD
 | `injectTools` | `true` | 启用 notes/history/new_context 工具；关闭时压缩完全是原生的 |
 | `defaultStrategy` | `window` | 默认策略；`native` 让未列出的模型只做原生压缩、不追加窗口消息 |
 | `modelPolicies` | `[]` | 按精确 provider/model 覆盖策略，首个匹配项生效 |
-| `handoffMaxChars` | `8000` | 窗口消息的最大字符数，不含原生摘要 |
+| `handoffMaxChars` | `6000` | 窗口消息的最大字符数，不含原生摘要 |
 
 `injectTools: false` 会移除工具，压缩完全走原生，避免裁剪之后无工具可恢复历史。`overrideCompaction: false` 保留 notes/history 工具，压缩时不追加窗口消息，此时 `new_context` 会被拒绝。
 

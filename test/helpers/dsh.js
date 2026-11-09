@@ -36,6 +36,7 @@ export function user(session, text) {
 }
 export const { SessionProjectionRegistry } = await dsh('dsh-session-projection');
 export const { ToolRuntime } = await dsh('dsh-tools');
+export const { NativeToolExecutor } = await dsh('dsh-tool-executor-native');
 export const { CommandRuntime } = await dsh('dsh-commands');
 
 /**
@@ -64,6 +65,8 @@ export async function fixture(options = {}) {
   new TokenMeter(ctx);
   new SystemPrompt(ctx, {});
   new ToolRuntime(ctx);
+  // DSH 0.2.1+ moved execution out of the registry: mount the native executor.
+  ctx.tools.setExecutor(new NativeToolExecutor(ctx));
   new CommandRuntime(ctx);
   const attach = await installSettings(ctx, dsh);
   // A test durability listener records the exact immutable snapshot crossing the
@@ -87,10 +90,12 @@ export async function fixture(options = {}) {
   };
   if (native) native.onSummarize = () => { legacyCalls++; };
   let plugin;
+  // Tests exercise the full tool surface; the lazy gate has its own test.
+  const config = { lazyTools: false, ...(options.config ?? {}) };
   const module = await import('../../lib/index.js');
-  const fiber = ctx.plugin({ ...module.default, apply(child, config) { plugin = module.apply(child, config); } }, options.config ?? {});
+  const fiber = ctx.plugin({ ...module.default, apply(child, cfg) { child.fiber.appliedConfig = cfg; plugin = module.apply(child, cfg); } }, config);
   await fiber.await();
-  attach('context-management', fiber, options.config ?? {});
+  attach('context-management', fiber, config);
   if (!plugin) throw new Error('Plugin did not activate');
   async function agent(id = 'test-agent') {
     const session = ctx.sessions.prepare(id);
@@ -111,7 +116,14 @@ export async function fixture(options = {}) {
     };
   }
   async function execute(agent, name, args = {}) {
-    return ctx.tools.execute({ agent, name, arguments: args, callId: 'test-call', signal: new AbortController().signal });
+    const signal = new AbortController().signal;
+    // DSH 0.2.2 executes a batch and admits conditional tools per step.
+    const toolSet = await ctx.tools.resolve({ agent, signal });
+    const batch = await ctx.tools.execute({ agent, signal, toolSet,
+      calls: [{ id: 'test-call', name, arguments: JSON.stringify(args) }] });
+    const result = batch.results[0]?.result;
+    if (!result) throw new Error(`tool ${name} produced no result`);
+    return result;
   }
   let closed = false;
   return { ctx, native, plugin, fiber, agent, execute, persisted, storage, root,

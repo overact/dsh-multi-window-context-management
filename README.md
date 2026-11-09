@@ -6,10 +6,10 @@ Windowed context handoffs, session-private notes and paged history recall for [D
 
 ## Compatibility
 
-Version **0.5.0**, verified on **DSH 0.2.1-rc.3 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
+Version **0.6.0**, verified on **DSH 0.2.2-rc.1 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
 
 - **Compaction stays native in every preset.** The plugin never replaces, subclasses or patches DSH's compaction engine, and touches no preset. DSH upgrades need no extra step, and presets you create yourself are covered automatically.
-- After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions, recent notes and the window index. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
+- After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions and recent notes. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
 - `new_context` finds the engine of the caller's own preset through `agentPresets.serviceFor(agent, 'compaction')` and asks it for one forced compaction. Native tool-call pairing, retention, maintenance lock, cancellation, shrink check, transaction, persistence and overflow retry all apply unchanged.
 - The window number only advances once DSH actually commits the replacement. Failures, cancellations and "nothing to compact" never report a successful switch.
 - Unloading or disabling the plugin leaves native compaction exactly as DSH ships it.
@@ -43,7 +43,7 @@ A session cannot append while it is publishing an event, so the window message f
 | `history_search` | Browse messages, optionally search with `query`; use `scope: "windows"` for the paged window directory |
 | `history_read` | Read an item by ID, including the summary, goal and checklist IDs printed in window messages |
 
-All tools are scoped to the calling session; no session selector is exposed. Reads and writes stay separate. Note listing/search uses newest-updated order; sorting aliases are no longer exposed. `notes_read` returns `files` for listing, `matches` for search, or a paginated body for a path. Path reads cannot be combined with search/list options. History discovery returns `items`, `matches` or `windows`, plus `has_more` / `next_cursor`.
+`notes_read`, `notes_write`, `history_search` and `history_read` are only offered after the session's first window rotation (`lazyTools`, on by default): a session that never rotates pays for `new_context` alone. All tools are scoped to the calling session; no session selector is exposed. Reads and writes stay separate. Note listing/search uses newest-updated order; sorting aliases are no longer exposed. `notes_read` returns `files` for listing, `matches` for search, or a paginated body for a path. Path reads cannot be combined with search/list options. History discovery returns `items`, `matches` or `windows`, plus `has_more` / `next_cursor`.
 
 Examples: `notes_write({path: "progress.md", text: "Tests passed", mode: "replace"})`, `notes_read({query: "Tests"})`, `history_search({scope: "windows", limit: 10})`, `history_read({item_id: "item_42"})`.
 
@@ -76,8 +76,8 @@ Include `context-management/notes/` when backing up or migrating; **deleting a s
 
 | Operation | Default / hard limit |
 | --- | --- |
-| Window message (`handoffMaxChars`) | 8,000 characters by default, configurable 4,000–32,000; the native summary is separate and sized by DSH's own `maxTokens` |
-| Injected notes | Up to the 8 most recent, ~1,200 characters each, within the message budget |
+| Window message (`handoffMaxChars`) | 6,000 characters by default, configurable 4,000–32,000; the native summary is separate and sized by DSH's own `maxTokens` |
+| Injected notes | Up to the 4 most recent, ~800 characters each, within the message budget |
 | Single note file | 1,000,000 UTF-8 bytes |
 | Notes per session | 64 files / 4,000,000 UTF-8 bytes; over-limit writes are rejected, never silently evicted |
 | History list / search | 20 items by default, 50 max; 400 characters per item by default, 1,000 max |
@@ -152,9 +152,10 @@ It exits with code 1 when any fail-level check fails. Running it after a DSH upg
         enabled: true
         overrideCompaction: true
         injectTools: true
+        lazyTools: true              # notes/history appear after the first rotation
         defaultStrategy: window      # or native: models not listed in modelPolicies get no window messages
         modelPolicies: []            # e.g. [{ provider: deepseek, model: deepseek-chat, strategy: native }]
-        handoffMaxChars: 8000        # 4000–32000
+        handoffMaxChars: 6000        # 4000–32000
 ```
 
 | Key | Default | Meaning |
@@ -162,9 +163,10 @@ It exits with code 1 when any fail-level check fails. Running it after a DSH upg
 | `enabled` | `true` | Enable context management for every session of this DSH instance; this is what `/ctx` toggles |
 | `overrideCompaction` | `true` | Append the window message after each native compaction and open a new window |
 | `injectTools` | `true` | Provide the notes/history/new_context tools; when off, compaction is purely native |
+| `lazyTools` | `true` | Offer notes/history only after the session's first window rotation; `false` keeps all five tools from the start |
 | `defaultStrategy` | `window` | Default strategy; `native` makes unlisted models compact natively without window messages |
 | `modelPolicies` | `[]` | Per exact provider/model strategy overrides; the first match wins |
-| `handoffMaxChars` | `8000` | Maximum characters of the window message, not counting the native summary |
+| `handoffMaxChars` | `6000` | Maximum characters of the window message, not counting the native summary |
 
 `injectTools: false` removes the tools and leaves compaction purely native, so history is never trimmed without a way to recover it. `overrideCompaction: false` keeps the notes/history tools while compaction runs without window messages; `new_context` is then refused.
 

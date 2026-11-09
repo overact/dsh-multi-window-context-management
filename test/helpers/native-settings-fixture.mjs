@@ -13,7 +13,12 @@ export async function installSettings(ctx, dsh) {
   async edit(entry,change){
    const next=change(entry.options.config,{});
    const validated=entry.fiber.runtime.Config(next);
-   for(const [key,value] of Object.entries(validated))updateVolatile(entry.fiber.config[key],value);
+   const target=entry.fiber.appliedConfig??entry.fiber.config;
+   for(const [key,value] of Object.entries(validated)){
+    const ref=target[key];
+    if(ref!==undefined&&typeof ref?.get==='function')updateVolatile(ref,value);
+    else target[key]=value;
+   }
    entry.options.config=next;
   }
  });

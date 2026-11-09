@@ -1,0 +1,21 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="back" x1="4" y1="5" x2="24" y2="21" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C9BFF"/>
+      <stop offset="1" stop-color="#4A3AE0"/>
+    </linearGradient>
+    <linearGradient id="front" x1="12" y1="14" x2="33" y2="31" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45E7A4"/>
+      <stop offset="1" stop-color="#1BA6A6"/>
+    </linearGradient>
+  </defs>
+  <!-- previous window, fading behind -->
+  <rect x="4.75" y="5.75" width="17.5" height="12.5" rx="2.5" stroke="url(#back)" stroke-width="1.7" opacity=".55"/>
+  <path d="M8.5 9.5h6" stroke="url(#back)" stroke-width="1.7" stroke-linecap="round" opacity=".55"/>
+  <!-- current window -->
+  <rect x="13.25" y="15.25" width="18" height="15" rx="2.75" fill="url(#front)" fill-opacity=".12" stroke="url(#front)" stroke-width="1.9"/>
+  <path d="M17.5 20.5h9.5M17.5 24h6.5" stroke="url(#front)" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- handoff: the window rotates forward -->
+  <path d="M23.5 9.2h3.2a2.6 2.6 0 0 1 2.6 2.6v1.4" stroke="url(#back)" stroke-width="1.7" stroke-linecap="round"/>
+  <path d="M27.6 11.6l1.7 2.2 1.7-2.2" stroke="url(#back)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

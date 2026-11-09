@@ -4,7 +4,7 @@ import { fixture, user } from './helpers/dsh.js';
 
 const signal = () => new AbortController().signal;
 /** Distinctive text of the plugin's own system-prompt section. */
-const PROMPT_MARKER = 'Use session-private notes for durable facts on long tasks.';
+const PROMPT_MARKER = 'Session notes are private to this session.';
 
 /** Apply the host plugin the way a hot swap does: a fresh module evaluation
  * registers everything again on the same Cordis context. */
@@ -38,7 +38,7 @@ test('the host plugin hot-swaps: unload removes every registration and re-apply 
     assert.equal(await promptSections(), 0, `cycle ${cycle}: prompt section leaked`);
     assert.equal(f.ctx.get('contextWindows'), undefined, `cycle ${cycle}: service leaked`);
     assert.equal((await f.execute(a, 'notes_read', { path: 'durable.md' })).isError, true);
-    ({ fiber: f.fiber } = await applyHost(f.ctx));
+    ({ fiber: f.fiber } = await applyHost(f.ctx, { lazyTools: false }));
   }
 
   assert.equal(tools(), 5, 'tool count must not double');
