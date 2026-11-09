@@ -5,8 +5,11 @@ node_modules/
 # Local agent guidance and private working material
 /AGENTS.md
 /agents.md
+/TODO.md
 /scratch/
 /work/
+/experiments/
+/notes/
 /docs/handoffs/
 .env
 .env.*
