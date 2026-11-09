@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "多窗口上下文管理",
+    "description": "为 DeepSeek Harness 长任务提供换窗交接、会话私有笔记和分页历史检索。"
+  }
+}

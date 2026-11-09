@@ -1,4 +1,4 @@
-# dsh-context-management
+# dsh-multi-window-context-management
 
 [English](./README.md) · **简体中文**
 
@@ -92,13 +92,13 @@ flowchart TD
 
 ## 安装
 
-本插件未发布到 npm，包名 `@local/dsh-context-management` 表示本地插件。以 web profile 为例：
+本插件未发布到 npm，包名 `@local/dsh-multi-window-context-management` 表示本地插件。以 web profile 为例：
 
 1. 克隆并安装依赖：
 
    ```bash
-   git clone https://github.com/overact/dsh-context-management.git
-   cd dsh-context-management && npm install
+   git clone https://github.com/overact/dsh-multi-window-context-management.git
+   cd dsh-multi-window-context-management && npm install
    ```
 
 2. 运行[安装前检查](#安装前检查)，确认当前 DSH 具备插件需要的全部功能、profile 中没有冲突：
@@ -110,7 +110,7 @@ flowchart TD
 3. 在 profile 目录（`$DSH_HOME/profiles/<profile>/`）的 `package.json` 的 `dependencies` 中加入本地链接，然后在该目录运行 `pnpm install`：
 
    ```json
-   "@local/dsh-context-management": "link:<插件目录>"
+   "@local/dsh-multi-window-context-management": "link:<插件目录>"
    ```
 
 4. 在 profile 的 `cordis.patch.yml` 中注册插件（见下方配置）。
@@ -123,7 +123,7 @@ flowchart TD
 
 ### 从 0.3.x 升级
 
-0.3.x 通过在 profile patch 的生成块里整份复制自带 preset 来挂载自己的引擎。这个引擎已经移除，所以请删掉 `# >>> context-management preset overrides` 到 `# <<< context-management preset overrides` 之间的整块，并把其余位置残留的 `@local/dsh-context-management/compaction` 行改回 `@deepseek-ai/dsh-compaction-basic`。改完之前，安装前检查的「旧版 preset 覆盖」项会失败。`handoffSummary` 设置也已移除：已保存的值会被忽略，每次换窗都使用原生摘要。
+0.3.x 通过在 profile patch 的生成块里整份复制自带 preset 来挂载自己的引擎。这个引擎已经移除，所以请删掉 `# >>> context-management preset overrides` 到 `# <<< context-management preset overrides` 之间的整块，并把其余位置残留的 `@local/dsh-multi-window-context-management/compaction` 行改回 `@deepseek-ai/dsh-compaction-basic`。改完之前，安装前检查的「旧版 preset 覆盖」项会失败。`handoffSummary` 设置也已移除：已保存的值会被忽略，每次换窗都使用原生摘要。
 
 ## 安装前检查
 
@@ -147,7 +147,7 @@ flowchart TD
 ```yaml
 - insert:
     - id: context-management
-      name: '@local/dsh-context-management'
+      name: '@local/dsh-multi-window-context-management'
       config:
         enabled: true
         overrideCompaction: true

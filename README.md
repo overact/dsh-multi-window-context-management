@@ -1,4 +1,4 @@
-# dsh-context-management
+# dsh-multi-window-context-management
 
 **English** · [简体中文](./README.zh-CN.md)
 
@@ -97,8 +97,8 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 1. Clone and install dependencies:
 
    ```bash
-   git clone https://github.com/overact/dsh-context-management.git
-   cd dsh-context-management && npm install
+   git clone https://github.com/overact/dsh-multi-window-context-management.git
+   cd dsh-multi-window-context-management && npm install
    ```
 
 2. Run the [preflight check](#preflight-check) to confirm the installed DSH provides every capability the plugin needs and nothing in the profile collides with it:
@@ -110,7 +110,7 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 3. In the profile directory (`$DSH_HOME/profiles/<profile>/`), add a local link to `dependencies` in `package.json`, then run `pnpm install` there:
 
    ```json
-   "@local/dsh-context-management": "link:<plugin-dir>"
+   "@local/dsh-multi-window-context-management": "link:<plugin-dir>"
    ```
 
 4. Register the plugin in the profile's `cordis.patch.yml` (see Configuration below).
@@ -123,7 +123,7 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 
 ### Upgrading from 0.3.x
 
-0.3.x mounted its own engine by restating the shipped presets in a generated block of the profile patch. That engine is gone, so delete the block between `# >>> context-management preset overrides` and `# <<< context-management preset overrides`, and change any remaining `@local/dsh-context-management/compaction` row back to `@deepseek-ai/dsh-compaction-basic`. Until you do, the preflight's *legacy preset overrides* check fails. The `handoffSummary` setting is gone too: a stored value is ignored, and every window now uses the native summary.
+0.3.x mounted its own engine by restating the shipped presets in a generated block of the profile patch. That engine is gone, so delete the block between `# >>> context-management preset overrides` and `# <<< context-management preset overrides`, and change any remaining `@local/dsh-multi-window-context-management/compaction` row back to `@deepseek-ai/dsh-compaction-basic`. Until you do, the preflight's *legacy preset overrides* check fails. The `handoffSummary` setting is gone too: a stored value is ignored, and every window now uses the native summary.
 
 ## Preflight check
 
@@ -147,7 +147,7 @@ It exits with code 1 when any fail-level check fails. Running it after a DSH upg
 ```yaml
 - insert:
     - id: context-management
-      name: '@local/dsh-context-management'
+      name: '@local/dsh-multi-window-context-management'
       config:
         enabled: true
         overrideCompaction: true
