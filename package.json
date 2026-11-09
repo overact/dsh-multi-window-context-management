@@ -1,7 +1,6 @@
 {
   "name": "dsh-multi-window-context-management",
   "version": "0.7.0",
-  "private": true,
   "description": "Windowed context handoffs on top of DeepSeek Harness (DSH) native compaction, with session-private notes and paged history recall",
   "icon": "./icon.svg",
   "repository": {
