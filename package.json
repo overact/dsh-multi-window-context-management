@@ -1,6 +1,6 @@
 {
-  "name": "@local/dsh-multi-window-context-management",
-  "version": "0.6.1",
+  "name": "dsh-multi-window-context-management",
+  "version": "0.7.0",
   "private": true,
   "description": "Windowed context handoffs on top of DeepSeek Harness (DSH) native compaction, with session-private notes and paged history recall",
   "icon": "./icon.svg",
@@ -29,10 +29,12 @@
     "README.zh-CN.md",
     "LICENSE",
     "cordis.patch.yml",
-    "locale"
+    "locale",
+    "assets"
   ],
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.15",
+    "dsh": ">=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0"
   },
   "scripts": {
     "preflight": "node scripts/preflight.mjs",
@@ -66,9 +68,9 @@
     "@deepseek-ai/schemastery": "^3.18.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": ">=0.1.7-alpha.1 || >=0.2.0-0",
-    "@deepseek-ai/dsh-atomic-write": ">=0.1.7-alpha.1 || >=0.2.0-0",
-    "@deepseek-ai/dsh-home-paths": ">=0.1.7-alpha.1 || >=0.2.0-0"
+    "@deepseek-ai/dsh-llm": ">=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0",
+    "@deepseek-ai/dsh-atomic-write": ">=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0"
   },
   "devDependencies": {
     "@deepseek-ai/dsh": "0.2.0-rc.2"

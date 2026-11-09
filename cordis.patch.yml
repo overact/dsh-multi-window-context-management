@@ -1,4 +1,4 @@
 # dsh-multi-window-context-management plugin registration
 - insert:
     - id: context-management
-      name: '@local/dsh-multi-window-context-management'
+      name: 'dsh-multi-window-context-management'

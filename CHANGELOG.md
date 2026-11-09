@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- **Renamed to `dsh-multi-window-context-management` and published to npm.** The loader entry id stays `context-management`, so `/ctx` and the saved settings keep working; a `link:` install keeps working the same way.
+- Peer ranges now admit DSH 0.2.2 prereleases without `includePrerelease` (`>=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0`), and `engines.dsh` declares the same requirement for the plugin market.
+- Added a 180×180 PNG tile (`assets/icon-180.png`) for the plugin market.
+
 ## 0.6.1
 
 - **The plugin follows the DSH language.** Config descriptions, the `/ctx` command text, the system prompt section, the window handoff and the handoff note are now resolved from the host `locale` preference: English and Chinese ship with the plugin, and any other preference falls back to English. The `/ctx` command is re-registered when the language changes.

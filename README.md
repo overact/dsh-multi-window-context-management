@@ -6,7 +6,7 @@ Windowed context handoffs, session-private notes and paged history recall for [D
 
 ## Compatibility
 
-Version **0.6.1**, verified on **DSH 0.2.2-rc.1 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
+Version **0.7.0**, verified on **DSH 0.2.2-rc.1 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
 
 - **Compaction stays native in every preset.** The plugin never replaces, subclasses or patches DSH's compaction engine, and touches no preset. DSH upgrades need no extra step, and presets you create yourself are covered automatically.
 - After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions and recent notes. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
@@ -92,7 +92,13 @@ The last four user instructions are quoted in chronological order, up to 1,000 c
 
 ## Installation
 
-This plugin is not published to npm; the `@local/` scope marks it as a local plugin. Using the web profile as an example:
+The plugin is published to npm as `dsh-multi-window-context-management`:
+
+```bash
+dsh plugin --profile web add dsh-multi-window-context-management
+```
+
+For a local checkout, link it instead. Using the web profile as an example:
 
 1. Clone and install dependencies:
 
@@ -110,7 +116,7 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 3. In the profile directory (`$DSH_HOME/profiles/<profile>/`), add a local link to `dependencies` in `package.json`, then run `pnpm install` there:
 
    ```json
-   "@local/dsh-multi-window-context-management": "link:<plugin-dir>"
+   "dsh-multi-window-context-management": "link:<plugin-dir>"
    ```
 
 4. Register the plugin in the profile's `cordis.patch.yml` (see Configuration below).
@@ -123,7 +129,7 @@ This plugin is not published to npm; the `@local/` scope marks it as a local plu
 
 ### Upgrading from 0.3.x
 
-0.3.x mounted its own engine by restating the shipped presets in a generated block of the profile patch. That engine is gone, so delete the block between `# >>> context-management preset overrides` and `# <<< context-management preset overrides`, and change any remaining `@local/dsh-multi-window-context-management/compaction` row back to `@deepseek-ai/dsh-compaction-basic`. Until you do, the preflight's *legacy preset overrides* check fails. The `handoffSummary` setting is gone too: a stored value is ignored, and every window now uses the native summary.
+0.3.x mounted its own engine by restating the shipped presets in a generated block of the profile patch. That engine is gone, so delete the block between `# >>> context-management preset overrides` and `# <<< context-management preset overrides`, and change any remaining `dsh-multi-window-context-management/compaction` row back to `@deepseek-ai/dsh-compaction-basic`. Until you do, the preflight's *legacy preset overrides* check fails. The `handoffSummary` setting is gone too: a stored value is ignored, and every window now uses the native summary.
 
 ## Preflight check
 
@@ -147,7 +153,7 @@ It exits with code 1 when any fail-level check fails. Running it after a DSH upg
 ```yaml
 - insert:
     - id: context-management
-      name: '@local/dsh-multi-window-context-management'
+      name: 'dsh-multi-window-context-management'
       config:
         enabled: true
         overrideCompaction: true

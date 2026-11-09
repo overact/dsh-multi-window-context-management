@@ -6,7 +6,7 @@
 
 ## 当前适配
 
-版本 **0.6.1**，已针对 **DSH 0.2.2-rc.1 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
+版本 **0.7.0**，已针对 **DSH 0.2.2-rc.1 / Node.js ≥ 22.15** 验证。peer 范围为 `>=0.1.7-alpha.1 || >=0.2.0-0`（显式允许 0.2.0 预发布版本，稳定版本不设上限）：DSH 0.1.7-rc.1 起会在启动时跳过 peer 范围不含当前版本的插件，设上限会让插件在 DSH 升级后被静默跳过。兼容性改由[安装前检查](#安装前检查)按功能判断，而不是按版本号。
 
 - **每个 preset 的压缩都保持原生。** 插件不替换、不继承、也不修补 DSH 的压缩引擎，不碰任何 preset。升级 DSH 不需要额外步骤，你自己新建的 preset 也自动生效。
 - 每次 DSH 提交一次压缩后，插件追加一条**窗口消息**：目标、待办、最近几条用户指令和近期笔记，由它开启下一个窗口。摘要本身就是 DSH 自己的 checkpoint，不改动、不截断，并保留真实的 provider/model/usage。
@@ -92,7 +92,13 @@ flowchart TD
 
 ## 安装
 
-本插件未发布到 npm，包名 `@local/dsh-multi-window-context-management` 表示本地插件。以 web profile 为例：
+插件已发布到 npm，包名为 `dsh-multi-window-context-management`：
+
+```bash
+dsh plugin --profile web add dsh-multi-window-context-management
+```
+
+本地开发可以用 link 方式。以 web profile 为例：
 
 1. 克隆并安装依赖：
 
@@ -110,7 +116,7 @@ flowchart TD
 3. 在 profile 目录（`$DSH_HOME/profiles/<profile>/`）的 `package.json` 的 `dependencies` 中加入本地链接，然后在该目录运行 `pnpm install`：
 
    ```json
-   "@local/dsh-multi-window-context-management": "link:<插件目录>"
+   "dsh-multi-window-context-management": "link:<插件目录>"
    ```
 
 4. 在 profile 的 `cordis.patch.yml` 中注册插件（见下方配置）。
@@ -123,7 +129,7 @@ flowchart TD
 
 ### 从 0.3.x 升级
 
-0.3.x 通过在 profile patch 的生成块里整份复制自带 preset 来挂载自己的引擎。这个引擎已经移除，所以请删掉 `# >>> context-management preset overrides` 到 `# <<< context-management preset overrides` 之间的整块，并把其余位置残留的 `@local/dsh-multi-window-context-management/compaction` 行改回 `@deepseek-ai/dsh-compaction-basic`。改完之前，安装前检查的「旧版 preset 覆盖」项会失败。`handoffSummary` 设置也已移除：已保存的值会被忽略，每次换窗都使用原生摘要。
+0.3.x 通过在 profile patch 的生成块里整份复制自带 preset 来挂载自己的引擎。这个引擎已经移除，所以请删掉 `# >>> context-management preset overrides` 到 `# <<< context-management preset overrides` 之间的整块，并把其余位置残留的 `dsh-multi-window-context-management/compaction` 行改回 `@deepseek-ai/dsh-compaction-basic`。改完之前，安装前检查的「旧版 preset 覆盖」项会失败。`handoffSummary` 设置也已移除：已保存的值会被忽略，每次换窗都使用原生摘要。
 
 ## 安装前检查
 
@@ -147,7 +153,7 @@ flowchart TD
 ```yaml
 - insert:
     - id: context-management
-      name: '@local/dsh-multi-window-context-management'
+      name: 'dsh-multi-window-context-management'
       config:
         enabled: true
         overrideCompaction: true
