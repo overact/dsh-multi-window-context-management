@@ -49,3 +49,14 @@ test('note capacity checks apply to write and append without evicting notes', ()
   assert.throws(() => notes.appendToFile('self', 'a', 'xxxxx'), /byte limit/);
   assert.equal(notes.readFile('self', 'a').content, 'abc');
 });
+
+test('a summary without shadowed seqs keeps a null through_seq', () => {
+  const s = Session.create('empty-shadow'); const states = new SessionStateStore();
+  user(s, 'hello');
+  const { record } = new WindowEngine(states).prepare(s, 16000, {
+    seq: 9,
+    data: { compactionId: 'c-empty', shadowedSeqs: [], summary: [{ type: 'text', text: 'x' }],
+      rawOutput: [{ type: 'text', text: 'x' }], provider: 'p', model: 'm' },
+  });
+  assert.equal(record.through_seq, null);
+});

@@ -6,7 +6,7 @@ Windowed context handoffs, session-private notes and paged history recall for [D
 
 ## Compatibility
 
-Version **0.7.0**, verified on **DSH 0.2.2-rc.1 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0`, admitting the 0.2.0 prereleases with no upper bound on stable releases: since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
+Version **0.7.1**, verified on **DSH 0.2.2-rc.1 / Node.js ≥ 22.15**. Peer ranges are `>=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0`: the split admits 0.2.2 prereleases even when the host checks without `includePrerelease`, and no clause caps stable releases. Since 0.1.7-rc.1, DSH skips at startup any plugin whose peer range excludes the running version, so an upper bound would silently disable the plugin after a DSH upgrade. Compatibility is judged by capability instead, through the [preflight check](#preflight-check).
 
 - **Compaction stays native in every preset.** The plugin never replaces, subclasses or patches DSH's compaction engine, and touches no preset. DSH upgrades need no extra step, and presets you create yourself are covered automatically.
 - After each committed DSH compaction, the plugin appends one **window message**: goal, todos, the last user instructions and recent notes. That message opens the next window. The summary itself is DSH's own checkpoint, unchanged and unclipped, with its real provider/model/usage.
@@ -205,6 +205,8 @@ History reads are incremental: building state for 10,000 synthetic events takes 
 | `lib/text.js` | Message text extraction and clipping |
 | `lib/client.js` | Web settings page (lazy-CJS client module) |
 | `scripts/preflight.mjs` / `dsh-env.mjs` | Pre-install capability check, locating DSH and the profile |
+
+Per-module design notes (Chinese) live in [`docs/design/`](./docs/design/README.md).
 
 ## License
 

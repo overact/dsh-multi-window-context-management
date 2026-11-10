@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+- **`lazyTools` now applies to a live settings change.** The gate is read at step time (`!current.lazyTools || rotated`), so toggling it takes effect on the next tool resolution without re-registering anything; `syncTools()` now only tracks whether the tools are mounted.
+- **An unreadable notes snapshot no longer blocks the session.** `NoteRepository.load()` quarantines a corrupt snapshot as `<session>.json.corrupt-<timestamp>` (kept, not deleted) and starts empty; `agent/pre-step` logs a state error instead of rejecting the step. Cancellation still propagates.
+- **`through_seq` is `null` when a compaction shadows no seqs**, instead of `-Infinity` becoming `null` only by JSON serialization; the unused `summary_through_seq` window state is gone.
+- **Preflight warns about a stale `@local/...` plugin name in the profile patch.** DSH skips a row whose name does not match the installed package, so that row's config silently stops applying; the check catches the rename residue.
+- Both READMEs now state the peer range that `package.json` actually declares (`>=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0`).
+- **Per-module design notes** live in `docs/design/` (shipped in the package) and are linked from both READMEs.
+
 ## 0.7.0
 
 - **Renamed to `dsh-multi-window-context-management` and published to npm.** The loader entry id stays `context-management`, so `/ctx` and the saved settings keep working; a `link:` install keeps working the same way.

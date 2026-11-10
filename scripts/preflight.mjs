@@ -236,6 +236,16 @@ function checks(req) {
     return 'none';
   });
 
+  // A package rename leaves the old `@local/...` name in the profile patch. The
+  // loader compares names and skips the row, so that row's config stops applying.
+  add('profile plugin names', 'warn', ({ profile }) => {
+    const patch = join(profileDir(profile), 'cordis.patch.yml');
+    if (!existsSync(patch)) return 'no profile patch yet';
+    const stale = [...readFileSync(patch, 'utf8').matchAll(/^\s*name:\s*['"]?(@local\/[^'"\s]+)/gm)].map(m => m[1]);
+    if (stale.length) throw new Error(`${patch} still names ${stale.join(', ')}; DSH skips a row whose name does not match the installed package`);
+    return 'no stale @local names';
+  });
+
   return list;
 }
 

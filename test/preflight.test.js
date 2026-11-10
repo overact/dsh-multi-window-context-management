@@ -117,3 +117,17 @@ test('preflight reports tool and command names already taken in the profile', as
     env.dispose();
   }
 });
+
+test('preflight warns about a stale @local plugin name in the profile patch', async () => {
+  const env = fixture({ patch: "- id: context-management\n  name: '@local/dsh-multi-window-context-management'\n  config:\n    enabled: true\n" });
+  try {
+    const result = await env.run();
+    const check = result.results.find(r => r.id === 'profile plugin names');
+    assert.equal(check.ok, false);
+    assert.match(check.detail, /@local\/dsh-multi-window-context-management/);
+    // A stale profile row is a warning: the plugin's own bundle row still loads.
+    assert.deepEqual(failures(result), []);
+  } finally {
+    env.dispose();
+  }
+});

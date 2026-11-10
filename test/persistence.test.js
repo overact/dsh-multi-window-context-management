@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixture, user, Context, SessionStore, Session, jsonlStorage } from './helpers/dsh.js';
@@ -85,4 +85,21 @@ test('merged note writes preserve saved content and cache on cancellation or rep
   assert.equal(state.notes, cached);
   assert.equal(state.notes.readFile('self', 'state.md').content, 'saved');
   assert.equal(new NoteRepository(f.notesRoot).load(a.session).readFile('self', 'state.md').content, 'saved');
+});
+
+test('an unreadable notes snapshot is quarantined instead of blocking the session', async t => {
+  const f = await fixture(); t.after(f.dispose);
+  const a = await f.agent('corrupt-session');
+  mkdirSync(f.notesRoot(), { recursive: true });
+  writeFileSync(join(f.notesRoot(), 'corrupt-session.json'), '{not json');
+  const state = f.plugin.states.get(a.session);
+  assert.equal(state.notes.files.size, 0, 'the corrupt snapshot is not loaded');
+  assert.equal(readdirSync(f.notesRoot()).filter(name => name.startsWith('corrupt-session.json.corrupt-')).length, 1,
+    'the original file is kept under a .corrupt-* name');
+  // The pre-step waterfall still runs; an auxiliary state error must not reject the step.
+  await f.ctx.waterfall('agent/pre-step', { agent: a, messages: [], turn: 1, step: 1,
+    signal: new AbortController().signal, modelSelection: {} }, () => Promise.resolve({ kind: 'enter' }));
+  // A later write starts a fresh snapshot rather than failing forever.
+  assert.equal((await f.execute(a, 'notes_write', { mode: 'replace', path: 'progress.md', text: 'recovered' })).isError, false);
+  assert.equal(f.plugin.states.get(a.session).notes.readFile('self', 'progress.md').content, 'recovered');
 });
