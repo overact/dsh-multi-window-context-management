@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readdirSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readdirSync, rmSync, realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { dshRoot } from './helpers/dsh.js';
 import { runPreflight, requirements, definesName } from '../scripts/preflight.mjs';
 
@@ -14,7 +14,8 @@ function fixture({ stubs = {}, plugins = {}, patch } = {}) {
   const scope = join(dsh, 'node_modules', '@deepseek-ai');
   mkdirSync(scope, { recursive: true });
   writeFileSync(join(dsh, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh' }));
-  const real = join(realpathSync(dshRoot), 'node_modules', '@deepseek-ai');
+  const realRoot = realpathSync(dshRoot);
+  const real = [join(realRoot, 'node_modules', '@deepseek-ai'), dirname(realRoot)].find(dir => existsSync(dir));
   for (const name of readdirSync(real)) {
     if (!stubs[name]) { symlinkSync(join(real, name), join(scope, name)); continue; }
     mkdirSync(join(scope, name));

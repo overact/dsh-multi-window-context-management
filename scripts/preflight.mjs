@@ -10,7 +10,7 @@
 //   node scripts/preflight.mjs [--profile web] [--dsh-dir <dir>]
 // Exit code 1 when a blocking check fails; warnings do not fail.
 import { readFileSync, readdirSync, existsSync, accessSync, realpathSync, constants } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, basename, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveDshDir, profileDir, fromDsh, dshHome, parseArgs } from './dsh-env.mjs';
 import { NOTES_TOOLS } from '../lib/tools/notes.js';
@@ -121,9 +121,23 @@ export function definesName(code, name) {
   return false;
 }
 
+/** Every @deepseek-ai/dsh* package reachable from the install: a global install
+ * nests them under the DSH package, while a project install hoists them next to
+ * it. Both layouts are valid, so read both scopes. */
 function dshPackages(dshDir) {
-  const scope = join(dshDir, 'node_modules', '@deepseek-ai');
-  return readdirSync(scope).filter(n => n.startsWith('dsh')).map(n => ({ name: `@deepseek-ai/${n}`, dir: realpathSync(join(scope, n)) }));
+  const found = new Map();
+  const scopes = [join(dshDir, 'node_modules', '@deepseek-ai')];
+  if (basename(dirname(dshDir)) === '@deepseek-ai') scopes.push(dirname(dshDir));
+  for (const scope of scopes) {
+    if (!existsSync(scope)) continue;
+    for (const name of readdirSync(scope)) {
+      if (!name.startsWith('dsh')) continue;
+      const at = join(scope, name);
+      if (!existsSync(join(at, 'package.json')) || found.has(name)) continue;
+      found.set(name, realpathSync(at));
+    }
+  }
+  return [...found].map(([name, dir]) => ({ name: `@deepseek-ai/${name}`, dir }));
 }
 
 /** Other plugins installed in the profile (this one excluded). */

@@ -40,7 +40,8 @@
     "preflight": "node scripts/preflight.mjs",
     "test": "node --experimental-test-isolation=none --test test/*.test.js",
     "check": "node scripts/check.mjs",
-    "verify": "npm run check && npm run test"
+    "verify": "npm run check && npm run test",
+    "release:notes": "node scripts/release-notes.mjs"
   },
   "dsh": {
     "bundle": {
@@ -73,6 +74,6 @@
     "@deepseek-ai/dsh-home-paths": ">=0.1.7-alpha.1 || >=0.2.0-0 <0.2.2-0 || >=0.2.2-0"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh": "0.2.0-rc.2"
+    "@deepseek-ai/dsh": "0.2.2-rc.1"
   }
 }
